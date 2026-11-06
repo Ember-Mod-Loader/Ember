@@ -6,6 +6,7 @@ on:
     paths:
       - package.json
       - package-lock.json
+      - .github/workflows/release.yml
     tags: ['v*']
   workflow_dispatch:
 
@@ -68,11 +69,12 @@ jobs:
             Write-Output "Release $tag already exists; no artifacts will be replaced."
             exit 0
           }
-          git show-ref --verify --quiet "refs/tags/$tag"
-          if ($LASTEXITCODE -eq 0) {
+          $existingTag = @(git tag --list $tag)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the version tag.' }
+          if ($existingTag -contains $tag) {
             $existingTagCommit = git rev-parse "refs/tags/$tag^{commit}"
             if ($LASTEXITCODE -ne 0 -or $existingTagCommit -ne $sourceCommit) { throw 'The version tag points at different source. Publish a new version or run the workflow on that tag.' }
-          } elseif ($LASTEXITCODE -ne 1) { throw 'Could not inspect the version tag.' }
+          }
           foreach ($publishedTag in $existing) {
             if ($publishedTag -match '^v(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -ge [version]$version) { throw 'The release version must be newer than every published stable release.' }
           }
