@@ -29,6 +29,7 @@ const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
 const ui = { page: 'browse', query: '', category: '', sort: '', library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
 let requestNumber = 0;
+let gameStatusRequestNumber = 0;
 let searchTimer;
 let prefetchTimer;
 const removedDownloadIds = new Set();
@@ -59,7 +60,7 @@ const modArt = (mod, sizeClass = '') => mod.icon
   ? `<img class="mod-art ${sizeClass}" src="${esc(mod.icon.startsWith('https://') ? mod.icon : asset(mod.icon))}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`
   : `<span class="mod-art fallback-art ${sizeClass}">${icon('package', 27)}</span>`;
 const pageLabel = page => pages[page][0];
-const lethalSetup = () => manager.live && manager.game.id === 'lethal-company';
+const nativeLaunchSupported = () => manager.live && availableGames.some(game => game.id === manager.game.id);
 const errorMessage = error => String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 
 function button(label, glyph, action, options = {}) {
@@ -110,7 +111,7 @@ function render() {
       <div class="sidebar-bottom">
         <div class="launch-panel">
           <div class="launch-caption"><span class="status-dot${enabledCount ? ' active' : ''}" aria-hidden="true"></span><span><strong>${enabledCount.toLocaleString()}</strong> ${enabledCount === 1 ? 'mod' : 'mods'} enabled</span></div>
-          ${!manager.live || lethalSetup() ? `<div class="launch-actions">
+          ${!manager.live || nativeLaunchSupported() ? `<div class="launch-actions">
             ${button(ui.gameBusy ? 'Please wait…' : `${manager.live ? 'Launch' : 'Preview'} ${mode}`, 'play', 'launch-default', { style: 'primary launch-button', disabled: ui.gameBusy })}
             <button class="launch-options" type="button" data-action="launch-options" aria-label="Launch options" title="Launch options">${icon('down', 16)}</button>
           </div>` : ''}
@@ -472,10 +473,10 @@ async function finishDownload(context, error, profile) {
 function settingsPage() {
   const settings = manager.state.settings;
   return `${heading('WORKSPACE', 'Settings', 'Manage your game setup and app preferences.')}
-    ${lethalSetup() ? gameSetupPanel() : ''}
+    ${nativeLaunchSupported() ? gameSetupPanel() : ''}
     <section class="settings-panel"><h2>Preferences</h2>
       <div class="settings-row"><div><strong>Wallpaper</strong><p>${esc(WALLPAPERS.find(item => item.id === settings.wallpaper)?.name)} · Choose Ember’s background.</p></div>${button('Wallpapers', null, 'wallpapers')}</div>
-      ${lethalSetup() || !manager.live ? `<div class="settings-row"><div><label for="launch-mode">Default launch mode</label><p>Choose the primary launch button in the sidebar.</p></div><select id="launch-mode" class="field" data-setting="launchMode"><option value="modded"${settings.launchMode === 'modded' ? ' selected' : ''}>Modded</option><option value="vanilla"${settings.launchMode === 'vanilla' ? ' selected' : ''}>Vanilla</option></select></div>` : ''}
+      ${nativeLaunchSupported() || !manager.live ? `<div class="settings-row"><div><label for="launch-mode">Default launch mode</label><p>Choose the primary launch button in the sidebar.</p></div><select id="launch-mode" class="field" data-setting="launchMode"><option value="modded"${settings.launchMode === 'modded' ? ' selected' : ''}>Modded</option><option value="vanilla"${settings.launchMode === 'vanilla' ? ' selected' : ''}>Vanilla</option></select></div>` : ''}
       ${settingToggle('confirmRemoval', 'Confirm mod removal', 'Confirm removals from the active profile. Dependency warnings always appear.')}
       ${settingToggle('compactMode', 'Compact mod cards', 'Fit more packages into the catalog by hiding card descriptions.')}
     </section>
@@ -488,8 +489,8 @@ function settingsPage() {
 function gameSetupPanel() {
   const status = ui.gameStatus;
   return `<section class="settings-panel game-setup">
-    <h2>Lethal Company setup</h2>
-    <p class="muted">${status === undefined ? 'Looking for your Steam installation…' : esc(status?.message || 'Choose the Lethal Company folder from your Steam library.')}</p>
+    <h2>${esc(manager.game.name)} setup</h2>
+    <p class="muted">${status === undefined ? 'Looking for your Steam installation…' : esc(status?.message || `Choose the ${manager.game.name} folder from your Steam library.`)}</p>
     ${status?.gameDir ? `<p class="game-path">${esc(status.gameDir)}</p>` : ''}
     <div class="game-actions">
       ${button('Choose game folder', 'file', 'choose-game', { disabled: ui.gameBusy })}
@@ -714,16 +715,21 @@ function navigate(page, libraryFilter = 'all') {
   window.scrollTo(0, 0);
   document.querySelector('#main').focus({ preventScroll: true });
   if (manager.live && page === 'browse') void loadCatalog();
-  if (lethalSetup() && page === 'settings') void loadGameStatus();
+  if (nativeLaunchSupported() && page === 'settings') void loadGameStatus();
 }
 
 async function loadGameStatus() {
+  const gameId = manager.game.id;
+  const request = ++gameStatusRequestNumber;
+  let status;
   try {
-    ui.gameStatus = await desktop.gameStatus();
+    status = await desktop.gameStatus(gameId);
   } catch (error) {
-    ui.gameStatus = { message: errorMessage(error) };
+    status = { message: errorMessage(error) };
   }
-  if (lethalSetup() && ui.page === 'settings') render();
+  if (gameId !== manager.game.id || request !== gameStatusRequestNumber) return;
+  ui.gameStatus = status;
+  if (nativeLaunchSupported() && ui.page === 'settings') render();
 }
 
 function enabledRefs() {
@@ -748,8 +754,11 @@ async function gameTask(task, success) {
 }
 
 async function setupRequest() {
-  const status = await desktop.gameStatus();
-  if (status?.loader !== 'clean') throw new Error('Choose a clean Steam installation in Lethal Company setup.');
+  const { id: gameId, name: gameName } = manager.game;
+  const profileId = manager.profile.id;
+  const status = await desktop.gameStatus(gameId);
+  if (gameId !== manager.game.id || profileId !== manager.profile.id) return;
+  if (status?.loader !== 'clean') throw new Error(`Choose a clean Steam installation in ${gameName} setup.`);
   openDialog('launch-confirm', {
     title: 'Set up modded launch',
     description: 'Add the BepInEx Doorstop loader to this Steam game folder. The loader activates when you choose Launch modded.',
@@ -760,8 +769,11 @@ async function setupRequest() {
 }
 
 async function requestLaunch(mode = manager.state.settings.launchMode) {
-  if (!lethalSetup() || ui.gameBusy) return;
-  const status = await desktop.gameStatus();
+  if (!nativeLaunchSupported() || ui.gameBusy) return;
+  const { id: gameId, name: gameName } = manager.game;
+  const profileId = manager.profile.id;
+  const status = await desktop.gameStatus(gameId);
+  if (gameId !== manager.game.id || profileId !== manager.profile.id) return;
   if (!status) {
     navigate('settings');
     notify('Choose your Steam game folder to continue.');
@@ -771,7 +783,7 @@ async function requestLaunch(mode = manager.state.settings.launchMode) {
   if (mode === 'modded' && status.loader === 'existing' && !status.loaderApproved) {
     openDialog('launch-confirm', {
       title: 'Use the existing Doorstop loader?',
-      description: 'Steam will start Lethal Company with your selected Ember profile through the loader already in this game folder.',
+      description: `Steam will start ${gameName} with your selected Ember profile through the loader already in this game folder.`,
       gameDir: status.gameDir,
       label: 'Remember loader and launch',
       action: 'launch-existing',
@@ -784,10 +796,12 @@ async function requestLaunch(mode = manager.state.settings.launchMode) {
 
 async function launchGame(mode, fingerprint) {
   const workspace = manager;
+  const gameId = workspace.game.id;
   const profileId = workspace.profile.id;
+  const profileName = workspace.profile.name;
   const refs = mode === 'modded' ? enabledRefs() : [];
   await gameTask(async () => {
-    await desktop.launchGame(mode, profileId, refs, fingerprint, workspace.profile.name);
+    await desktop.launchGame(mode, profileId, refs, fingerprint, profileName, gameId);
     workspace.recordLaunch(profileId, mode);
   }, 'Steam received the launch request.');
 }
@@ -1069,8 +1083,11 @@ async function handleAction(action, id) {
     case 'retry-more': await loadCatalog(true); break;
     case 'select-game':
       manager.switchGame(id);
+      gameStatusRequestNumber++;
+      ui.gameStatus = undefined;
       ui.feed = emptyFeed();
       navigate('browse');
+      if (nativeLaunchSupported()) void loadGameStatus();
       notify(`Switched to ${getGame(id).name}.`);
       break;
     case 'pick-profile': openDialog('profiles'); break;
@@ -1150,33 +1167,50 @@ async function handleAction(action, id) {
       break;
     }
     case 'show-updates': navigate('library', 'updates'); break;
-    case 'choose-game':
-      await gameTask(async () => { ui.gameStatus = await desktop.chooseGame(); });
+    case 'choose-game': {
+      const gameId = manager.game.id;
+      gameStatusRequestNumber++;
+      await gameTask(async () => {
+        const status = await desktop.chooseGame(gameId);
+        if (gameId === manager.game.id) ui.gameStatus = status;
+      });
       break;
+    }
     case 'prepare-profile': {
       const profileId = manager.profile.id;
       const refs = enabledRefs();
       const name = manager.profile.name;
-      await gameTask(() => desktop.prepareProfile(profileId, refs, name), 'Your BepInEx profile is ready.');
+      const { id: gameId, name: gameName } = manager.game;
+      await gameTask(() => desktop.prepareProfile(profileId, refs, name, gameId), `Your ${gameName} profile is ready.`);
       break;
     }
-    case 'open-profile': await desktop.openProfile(manager.profile.id); break;
+    case 'open-profile': await desktop.openProfile(manager.profile.id, manager.game.id); break;
     case 'setup-request': await setupRequest(); break;
     case 'setup-loader': {
       const profileId = manager.profile.id;
       const refs = enabledRefs();
       const name = manager.profile.name;
+      const gameId = manager.game.id;
+      gameStatusRequestNumber++;
       await gameTask(async () => {
-        ui.gameStatus = await desktop.setupLoader(profileId, refs, name);
+        const status = await desktop.setupLoader(profileId, refs, name, gameId);
+        if (gameId === manager.game.id) ui.gameStatus = status;
       }, 'Loader ready. Use Launch modded to start through Steam.');
       break;
     }
     case 'remove-loader-request':
-      confirm('Remove the Ember loader?', 'Remove the loader files Ember added to your Steam game folder.', 'Remove loader', 'remove-loader');
+      confirm('Remove the Ember loader?', `Remove the loader files Ember added to your ${manager.game.name} Steam folder.`, 'Remove loader', 'remove-loader', manager.game.id);
       break;
-    case 'remove-loader':
-      await gameTask(async () => { ui.gameStatus = await desktop.removeLoader(); }, 'Ember loader removed.');
+    case 'remove-loader': {
+      const gameId = id ?? manager.game.id;
+      if (gameId !== manager.game.id) throw new Error('The active game changed. Choose the loader again.');
+      gameStatusRequestNumber++;
+      await gameTask(async () => {
+        const status = await desktop.removeLoader(gameId);
+        if (gameId === manager.game.id) ui.gameStatus = status;
+      }, 'Ember loader removed.');
       break;
+    }
     case 'launch-existing': await launchGame('modded', id); break;
     case 'launch-default': await requestLaunch(); break;
     case 'launch-options': openDialog('launch-options'); break;

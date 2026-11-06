@@ -1,16 +1,16 @@
 const { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session, shell } = require('electron');
 const { randomUUID } = require('node:crypto');
 const { mkdirSync, existsSync } = require('node:fs');
-const { readFile, rename, rm, writeFile } = require('node:fs/promises');
+const { rename, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { fetchCatalog, fetchPackage, fetchPackageVersion } = require('./thunderstore.cjs');
 const { createPackageCache } = require('./packages.cjs');
-const { createProfileBuilder } = require('./profiles.cjs');
+const { registerGameActions } = require('./game-actions.cjs');
 const { createDownloadHistory } = require('./download-history.cjs');
 const { createSharingClient } = require('./sharing.cjs');
 const { createClientUpdates } = require('./client-updates.cjs');
-const { findLethalCompany, getLaunchStatus, prepareDoorstop, removeManagedDoorstop, launchLethalCompany, assertLethalCompanyClosed, assertSupportedGamesClosed } = require('./steam.cjs');
+const { assertSupportedGamesClosed } = require('./steam.cjs');
 
 const appScheme = 'modrelay';
 const appHost = 'app';
@@ -132,9 +132,10 @@ async function downloadPackages(cache, gameId, roots, history, operationId) {
   }
 
   for (const ref of roots) await resolve(ref);
-  if (gameId === 'lethal-company' && roots.some(ref => !ref.version) &&
-      [...packages.values()].some(mod => mod.namespace === 'BepInEx' && mod.name === 'BepInExPack')) {
-    await resolve({ namespace: 'BepInEx', name: 'BepInExPack' });
+  const loaderName = gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
+  if (['lethal-company', 'repo', 'peak'].includes(gameId) && roots.some(ref => !ref.version) &&
+      [...packages.values()].some(mod => mod.namespace === 'BepInEx' && mod.name === loaderName)) {
+    await resolve({ namespace: 'BepInEx', name: loaderName });
   }
   const resolved = [...packages.values()].reverse();
   history.plan(operationId, resolved);
@@ -185,136 +186,6 @@ function createWindow() {
   });
 }
 
-function registerGameActions(cache, history) {
-  const directory = app.getPath('userData');
-  const settingsPath = path.join(directory, 'lethal-company.json');
-  let preparing = null;
-  const profileCache = {
-    root: cache.root,
-    async downloadPackage(input) {
-      const operation = preparing;
-      if (!operation.id) {
-        operation.id = randomUUID();
-        await history.start({
-          id: operation.id, gameId: 'lethal-company', profileId: operation.profileId,
-          profileName: operation.profileName, label: `Prepare ${operation.profileName}`,
-        });
-        history.plan(operation.id, operation.refs.map(ref => ({
-          ...ref, id: `lethal-company/${ref.namespace}/${ref.name}`,
-        })));
-      }
-      const key = `lethal-company/${input.namespace}/${input.name}@${input.version}`;
-      return cache.downloadPackage(input, progress => history.progress(operation.id, key, progress));
-    },
-  };
-  const profiles = createProfileBuilder(path.join(directory, 'profiles'), profileCache);
-  let busy = false;
-
-  async function prepareProfile(profileId, refs, profileName = 'Profile') {
-    preparing = { id: null, profileId, refs, profileName };
-    try {
-      const result = await profiles.prepareProfile(profileId, refs);
-      if (preparing.id) {
-        await history.ready(preparing.id);
-        await history.complete(preparing.id);
-      }
-      return result;
-    } catch (error) {
-      if (preparing.id) await history.fail(preparing.id, error).catch(() => {});
-      throw error;
-    } finally {
-      preparing = null;
-    }
-  }
-
-  async function savedGame() {
-    try {
-      const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
-      return settings ?? {};
-    } catch {
-      return {};
-    }
-  }
-
-  async function status() {
-    const saved = await savedGame();
-    const game = typeof saved.gameDir === 'string'
-      ? await getLaunchStatus(saved.gameDir).catch(() => findLethalCompany())
-      : await findLethalCompany();
-    return game && { ...game, loaderApproved: Boolean(game.loaderFingerprint && game.loaderFingerprint === saved.approvedLoader) };
-  }
-
-  async function saveGame(settings) {
-    const temporary = `${settingsPath}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, JSON.stringify(settings), { flag: 'wx' });
-      await rename(temporary, settingsPath);
-    } finally {
-      await rm(temporary, { force: true }).catch(() => {});
-    }
-  }
-
-  async function action(task) {
-    if (busy) throw new Error('A profile or launch is already being prepared.');
-    busy = true;
-    try {
-      return await task();
-    } finally {
-      busy = false;
-    }
-  }
-
-  handle('game-status', status);
-  handle('choose-game', async () => {
-    const found = await status();
-    const selected = await dialog.showOpenDialog(window, {
-      title: 'Choose the Lethal Company game folder',
-      defaultPath: found?.gameDir,
-      properties: ['openDirectory'],
-    });
-    if (selected.canceled) return found;
-    const game = await getLaunchStatus(selected.filePaths[0]);
-    await saveGame({ gameDir: game.gameDir, approvedLoader: game.loaderFingerprint === found?.loaderFingerprint && found?.loaderApproved ? game.loaderFingerprint : undefined });
-    return game;
-  });
-  handle('prepare-profile', (profileId, refs, profileName) => action(async () => {
-    await assertLethalCompanyClosed();
-    await prepareProfile(profileId, refs, profileName);
-    return true;
-  }));
-  handle('open-profile', async profileId => {
-    const error = await shell.openPath(await profiles.openProfilePath(profileId));
-    if (error) throw new Error('Could not open the profile folder.');
-  });
-  handle('setup-loader', (profileId, refs, profileName) => action(async () => {
-    const game = await status();
-    if (!game) throw new Error('Choose the Lethal Company game folder in Settings.');
-    if (game.loader !== 'clean') throw new Error('This game folder already has a loader. Review its status in Settings.');
-    await assertLethalCompanyClosed();
-    const loaderPath = await prepareProfile(profileId, refs, profileName);
-    return prepareDoorstop({ gameDir: game.gameDir, loaderPath });
-  }));
-  handle('remove-loader', () => action(async () => {
-    const game = await status();
-    if (game?.loader !== 'managed') throw new Error('Choose a Steam game folder with an Ember loader.');
-    return removeManagedDoorstop(game.gameDir);
-  }));
-  handle('launch-game', (mode, profileId, refs, approvedFingerprint, profileName) => action(async () => {
-    const game = await status();
-    if (!game) throw new Error('Choose the Lethal Company game folder in Settings.');
-    if (mode !== 'modded' && mode !== 'vanilla') throw new Error('Choose a launch mode.');
-    const remember = mode === 'modded' && game.loader === 'existing' && approvedFingerprint === game.loaderFingerprint;
-    if (mode === 'modded' && game.loader === 'existing' && !game.loaderApproved && !remember) {
-      throw new Error('Confirm reuse of the current Unity Doorstop loader first.');
-    }
-    if (remember) await saveGame({ gameDir: game.gameDir, approvedLoader: game.loaderFingerprint });
-    await assertLethalCompanyClosed();
-    const profilePath = mode === 'modded' ? await prepareProfile(profileId, refs, profileName) : undefined;
-    await launchLethalCompany({ gameDir: game.gameDir, mode, profilePath, allowExistingDoorstop: game.loaderApproved || remember, loaderFingerprint: game.loaderFingerprint });
-    return true;
-  }));
-  gameWorkBusy = () => busy || preparing !== null;
-}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -331,7 +202,10 @@ if (!app.requestSingleInstanceLock()) {
     const history = await createDownloadHistory(path.join(app.getPath('userData'), 'downloads.json'), record => {
       if (window && !window.webContents.isDestroyed()) window.webContents.send('modrelay:download-progress', record);
     });
-    registerGameActions(cache, history);
+    const gameActions = registerGameActions({
+      directory: app.getPath('userData'), cache, history, handle, dialog, shell, getWindow: () => window,
+    });
+    gameWorkBusy = gameActions.isBusy;
     handle('window-state', () => ({ maximized: window.isMaximized() }));
     const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE);
     const installed = app.isPackaged && process.platform === 'win32' && !portable &&

@@ -1,10 +1,9 @@
-# Ember 0.5.0
+# Ember 0.5.1
 
-- Added GitHub Releases as the public Windows update backend, with versioned installer metadata and checksum-verified downloads.
-- Installed clients check and download updates automatically at startup, and install when no game session, downloads, profile work, or editing dialog is active.
-- Settings now shows real client-update state, download progress, retry, and Install and restart.
-- Portable builds keep a manual View releases path.
-- Added MIT source licensing, contributing/security guidance, CI, and a draft-first Windows release workflow.
-- Existing 0.4.x users must install this version once to enable future automatic updates. Existing profiles and preferences are preserved.
+- Added Steam game detection, setup, and modded or vanilla launch for R.E.P.O. and PEAK alongside Lethal Company.
+- Kept each game's prepared profiles and loader setup separate.
+- Refreshed the project page with Ember branding, clear Windows download choices, and compact setup and developer documentation.
 
-Both Windows builds are unsigned.
+Installed clients receive this update through **Settings → Update client** or the automatic startup check. Portable users can download a replacement from the [latest release](https://github.com/Ember-Mod-Loader/Ember/releases/latest).
+
+Both Windows builds are unsigned. Existing profiles and preferences are preserved.

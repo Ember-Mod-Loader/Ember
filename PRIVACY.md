@@ -1,10 +1,10 @@
 # Privacy
 
-Applies to Ember 0.5.0.
+Applies to Ember 0.5.1.
 
 ## On your device
 
-Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account service, analytics, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company.
+Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account service, analytics, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company, R.E.P.O., and PEAK.
 
 Completed download-history entries clear automatically after 30 seconds, or when you choose Clear completed. This clears the history entries only; profiles, installed mods, and cached download files stay on your device.
 

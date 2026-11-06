@@ -1,74 +1,123 @@
+<div align="center">
+
+<img src="public/art/ember-flame.png" alt="Ember flame" width="80">
+
 # Ember
 
-Open-source Windows mod manager. [Source](https://github.com/Ember-Mod-Loader/Ember) · [Releases](https://github.com/Ember-Mod-Loader/Ember/releases/latest) · [Contributing](CONTRIBUTING.md)
+**Power your mods.**
 
-Ember is a Windows desktop app for browsing Thunderstore, downloading mods and their dependencies, and managing game profiles. The beta supports modded and vanilla launch for the Windows Steam edition of Lethal Company after game setup.
+A clean Windows mod manager for Lethal Company, R.E.P.O., and PEAK.
 
-## Get started
+[![Latest release](https://img.shields.io/github/v/release/Ember-Mod-Loader/Ember?style=flat-square&label=latest&color=ff6a00)](https://github.com/Ember-Mod-Loader/Ember/releases/latest)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-20232a?style=flat-square&logo=windows&logoColor=white)](https://github.com/Ember-Mod-Loader/Ember/releases/latest)
+[![MIT source license](https://img.shields.io/badge/source-MIT-20232a?style=flat-square)](LICENSE)
 
-1. On Windows x64, run `Ember-0.5.0-Windows-x64-Setup.exe` to install for your user account, or open `Ember-0.5.0-Windows-x64.exe` directly. Both builds save profiles and downloads in local app data. Use the installer for automatic client updates.
-2. Select a game and choose or create a profile. Use **Browse mods** to search the Thunderstore catalog, then choose **Download** on a package.
-3. Use **Installed mods** to enable, disable, or update packages in the active profile. Choose **Open downloads** to find the ZIP archives.
+**[Download Ember](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** · [Release notes](RELEASE-NOTES.md) · [Report a bug](https://github.com/Ember-Mod-Loader/Ember/issues)
 
-| Game | Beta support |
+</div>
+
+## Get Ember
+
+Open the **[latest release](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** and choose your Windows x64 download. The files above are the app's source code; you don't need them to install Ember.
+
+| Download | Choose this if… |
 | --- | --- |
-| Lethal Company | Browse, download, and launch modded or vanilla through Steam |
-| R.E.P.O. | Browse, download, and manage profiles |
-| PEAK | Browse, download, and manage profiles |
+| **[Windows installer](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** · ends in `-Setup.exe` | You want Ember installed with automatic client updates. Recommended. |
+| **[Portable app](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** · ends in `-x64.exe` | You want to run Ember without installing it. Update this build manually. |
 
-## Set up Lethal Company
+Both builds keep profiles and settings in local app data. Windows builds are currently unsigned. Release downloads include `SHA256SUMS.txt` for verification.
 
-1. Install Lethal Company in Steam and close the game.
-2. Open **Settings → Lethal Company setup**. Use **Choose game folder** if you need to select the installation.
-3. Download and enable your mods, then choose **Prepare profile**. Use **Open profile folder** to inspect the prepared files and find the BepInEx configuration directory.
-4. Choose **Launch modded** or **Launch vanilla**. On a clean installation, **Set up modded launch** asks before adding Doorstop files to the Steam game folder. An existing compatible loader can be reused after confirmation.
+## Your games. Your profiles.
 
-Use the arrow beside the launch button to select the launch mode. Ember remembers approval for an existing loader in that game folder and asks again if the loader files change.
+| <img src="public/art/game-lethal-company.jpg" alt="" width="56"><br>Lethal Company | <img src="public/art/game-repo.jpg" alt="" width="56"><br>R.E.P.O. | <img src="public/art/game-peak.jpg" alt="" width="56"><br>PEAK |
+| :---: | :---: | :---: |
+| Windows · Steam | Windows · Steam | Windows · Steam |
 
-Keep the profile’s BepInExPack and the game’s Doorstop loader on the same major version. If Steam’s custom launch options interfere, clear them in **Steam → Lethal Company → Properties → Launch Options**.
+Browse each game's Thunderstore catalog, install mods with their dependencies, and keep separate profiles. Ember finds games in your Steam libraries and supports **modded** and **vanilla** launch. If a game isn't found, select its installation folder in **Settings**.
 
-Use **Settings → Lethal Company setup → Remove loader** to remove a loader installed by Ember before uninstalling the app.
+- **Find your next mod.** Search, filter by category, and sort by downloads, recent updates, rating, or newest. More results load automatically.
+- **Keep control of your collection.** Enable, disable, update, or remove individual mods. Dependency prompts explain which other mods are affected.
+- **See what's happening.** Follow package progress in Downloads and check the installed and enabled counts for your current profile.
+- **Make it yours.** Choose one of six wallpapers. Your background stays with you across profiles, games, and restarts.
 
-Enable mods you trust. The game loads mod code with your Windows account's permissions. For package-specific compatibility, check its Thunderstore listing.
+## Start playing
 
-## Profiles and downloads
+1. Install your game through Steam, then open Ember and select it.
+2. Choose a profile or create a new one. Find mods in **Browse mods** and choose **Download**.
+3. Check **Installed mods**, then choose **Launch modded**. Complete game setup if Ember prompts you.
 
-- Use **Profiles → Share profile → Create share code** for a short `EMBER-…` code that works on another device running Ember. This uploads the selected profile to Thunderstore's sharing service; anyone with the code can import it. Creating and resolving short codes requires internet access. These are Ember profile codes; native Thunderstore/r2modman archive codes are not supported.
-- **Download JSON** keeps an offline export. **Import profile** accepts short Ember codes, older `MR1-…` codes, and Ember JSON exports, and downloads the profile's package versions.
-- Removing a package from a profile changes that profile's package list. Manage ZIP archives separately through **Installed mods → Open downloads**.
-- Disabling a required mod offers **Disable affected mods** to turn off its enabled dependents, or **Disable anyway** to turn off only that mod. Removing a required mod lists all installed dependents, including disabled mods. Choose **Delete anyway** to remove only the selected mod, or remove all affected mods together. Delete anyway leaves the other mods installed; they may not work until you reinstall the missing requirement. Dependency removal warnings always appear, even when ordinary removal confirmation is disabled.
+Use the arrow beside the launch button to select **Modded** or **Vanilla**. Changing the mode updates the button; the game starts when you press the launch button.
 
-## Release information
+<details>
+<summary><strong>Game setup and launch help</strong></summary>
 
-Installed Windows clients check GitHub Releases automatically at startup and download newer stable releases. Ember restarts to install when the game is closed and no download, profile operation, or editing dialog is active. **Settings → Update client** shows progress and allows manual checking and **Install and restart**. A network failure leaves the workspace usable and can be retried. Portable and development builds link to Releases for manual updates.
+Close the game before preparing a profile or changing its loader. In **Settings**, use the game's setup panel to choose its Steam folder, **Prepare profile**, or open the prepared profile folder.
 
-**Coming from 0.4.x:** install 0.5.0 once using the installer. Earlier builds have no working updater and cannot bootstrap this upgrade automatically. Existing profiles, mods, wallpaper preferences, and caches are preserved in the same local app-data directory.
+On a clean game installation, Ember asks before adding the BepInEx Doorstop loader to the game folder. A compatible existing loader can be reused. Ember remembers approval for that folder and checks again if the loader files change.
 
-To publish an update, bump the version in package.json and package-lock.json and update RELEASE-NOTES.md, then push to main. The Windows release workflow tests and builds the exact commit, uploads installer/portable builds, updater metadata, blockmap, and checksums into a draft, then publishes the complete stable release. Never overwrite an existing release/version. See [CONTRIBUTING.md](CONTRIBUTING.md) for the release procedure.
+Use the BepInEx package intended for your game: **BepInExPack_PEAK** for PEAK, and **BepInExPack** for Lethal Company or R.E.P.O. If custom Steam launch options interfere, review them in the game's **Steam → Properties → Launch Options**.
 
-The Ember source is MIT licensed; third-party libraries, game artwork, mod branding, and trademarks retain their own licenses and ownership. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Windows builds are currently unsigned; signing credentials are not stored in the repository.
+Use **Remove loader** in the setup panel to remove a loader installed by Ember before uninstalling the app. Install mods you trust and check their Thunderstore listings for compatibility.
 
-[Release notes](RELEASE-NOTES.md) · [Privacy](PRIVACY.md) · [Third-party notices](THIRD-PARTY-NOTICES.md)
+</details>
 
-Ember is an independent app. Thunderstore provides the catalog and downloads. Steam and the game developers provide their respective platforms and games.
+<details>
+<summary><strong>Profiles, dependency prompts, and downloads</strong></summary>
 
-## Run from source
+**Share a profile.** Choose **Profiles → Share profile → Create share code** for a short `EMBER-…` code that works on another device running Ember. This uploads the selected profile to Thunderstore's sharing service; anyone with the code can import it. Creating and resolving short codes needs internet access. Ember codes are supported; native Thunderstore/r2modman archive codes are not.
 
-Use Node.js 22.12 or newer and run these commands from the project folder.
+**Keep an offline copy.** **Download JSON** exports a profile. **Import profile** accepts Ember codes, older `MR1-…` codes, and Ember JSON exports, then downloads the profile's package versions.
+
+**Choose how dependencies change.** Enabling a mod with disabled requirements offers **Enable required mods**, **Enable anyway**, or **Cancel**. Disabling a required mod offers **Disable affected mods** or **Disable anyway**. Removing one lists its installed dependents and offers **Delete anyway** for that mod alone, or removal of all affected mods. Overrides can leave mods unable to load until their requirements are restored.
+
+**Track downloads.** **Downloads** shows progress and the destination profile. Completed entries clear after 30 seconds or with **Clear completed**. Active downloads and failures stay visible. Clearing history doesn't delete installed mods or cached ZIP files. **Installed mods → Open downloads** opens the archive folder.
+
+**Reset sorting.** Choose **Default order** or **Clear sorting** to return to Thunderstore's standard order.
+
+</details>
+
+<details>
+<summary><strong>Wallpapers</strong></summary>
+
+Choose **Settings → Wallpapers** for **Main**, **Ember Flow**, **Aurora**, **Obsidian**, **Crimson Dunes**, or **Solar Drift**. Main is the default. Your choice is shared across profiles and used on the loading screen.
+
+<img src="public/art/ember-landscape.png" alt="Main, Ember's dark mountain wallpaper with an orange horizon" width="800">
+
+</details>
+
+<details>
+<summary><strong>Client updates</strong></summary>
+
+Installed Windows clients check GitHub Releases at startup and download newer stable releases. Ember restarts to install when the game is closed and no download, profile operation, or editing dialog is active. **Settings → Update client** shows progress, retry, and **Install and restart**. A failed check leaves your workspace usable.
+
+Portable builds use the release page for manual replacement.
+
+**Upgrading from 0.4.x:** install a current release once using the installer. Older builds can't start the new updater automatically. Your existing profiles, mods, wallpaper preferences, and caches are preserved.
+
+</details>
+
+## Open source
+
+Ember's source is **MIT licensed**. Contributions and bug reports are welcome. Third-party libraries, game artwork, mod branding, and trademarks keep their own licenses and ownership.
+
+<details>
+<summary><strong>Build, contribute, or publish a release</strong></summary>
+
+Use **Node.js 24**. From the project folder:
 
 ```powershell
 npm ci
 npm start
 ```
 
-Use `npm run dev` for layout development. The desktop app connects to Thunderstore. Run `npm test` for the offline checks or `npm run package` to test and build Windows x64 artifacts locally.
+Use `npm run dev` for renderer development, `npm test` for offline checks, and `npm run build` for the production renderer. `npm run package` tests and builds Windows x64 installer and portable artifacts.
 
-The catalog loads more mods automatically as you scroll. Use the search field and category menu to narrow results.
+To publish an update, change the version in `package.json` and `package-lock.json`, update `RELEASE-NOTES.md`, then push to `main`. The Windows workflow tests and packages the exact commit, uploads the builds, updater metadata, blockmap, checksums, and notices to a draft, then publishes the complete stable release. Existing release versions aren't overwritten.
 
-Use **Sort mods** for Most downloaded, Recently updated, Top rated, or Newest. Choose **Default order** or **Clear sorting** to remove the custom sort; the catalog then uses Thunderstore's standard most-downloaded order.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and release guidance, and [SECURITY.md](SECURITY.md) for reporting security issues.
 
-Open **Downloads** to see per-package progress and the target profile. Completed entries clear automatically after 30 seconds, or immediately with **Clear completed** for the selected game. Expired entries also clear when Ember reopens. Active downloads and failed transfers remain visible; clearing completed entries does not remove installed mods, profiles, or cached ZIP files.
+</details>
 
-When a toggle affects dependencies, Ember explains which mods are required. Choose **Enable required mods** to enable the dependency chain, **Enable anyway** to override it, or **Cancel**. Overrides are saved with the profile.
+[License](LICENSE) · [Privacy](PRIVACY.md) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Contributing](CONTRIBUTING.md)
 
-Choose **Settings → Wallpapers** for six backgrounds: **Main**, **Ember Flow**, **Aurora**, **Obsidian**, **Crimson Dunes**, and **Solar Drift**. Main, the original mountain background, stays the default. Your choice is saved across app restarts and used by the loading screen too. The expanded picker includes thumbnail previews and scrolls on smaller windows.
+Ember is independent of Thunderstore, Steam, and the game developers. Thunderstore provides the mod catalog and package downloads.

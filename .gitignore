@@ -23,7 +23,6 @@ game-settings.json
 *.modrelay.json
 
 # Local tools and generated diagnostics
-.codex/
 tmp/
 temp/
 coverage/

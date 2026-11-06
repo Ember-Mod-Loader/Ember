@@ -5,16 +5,17 @@ const path = require('node:path');
 const { extractArchive } = require('./archive.cjs');
 
 const GAME = 'lethal-company';
+const GAMES = new Map([['lethal-company', 'Lethal Company'], ['repo', 'R.E.P.O.'], ['peak', 'PEAK']]);
 const PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll';
 const LOADER_FILES = new Set(['winhttp.dll', 'doorstop_config.ini', '.doorstop_version']);
 const PACKAGE_META = /^(?:manifest\.json|icon\.png|readme(?:\..*)?|changelog(?:\..*)?|license(?:\..*)?)$/i;
 const FORMAT = 1;
 
-function profileDirectory(root, id) {
-  if (typeof id !== 'string' || !/^(?:lethal-company-default|[0-9a-f-]{36})$/i.test(id)) {
-    throw new Error('Choose a valid Lethal Company profile.');
+function profileDirectory(root, id, gameId) {
+  if (typeof id !== 'string' || (id !== `${gameId}-default` && !/^[0-9a-f-]{36}$/i.test(id))) {
+    throw new Error(`Choose a valid ${GAMES.get(gameId)} profile.`);
   }
-  return path.join(root, GAME, id.toLowerCase());
+  return path.join(root, gameId, id.toLowerCase());
 }
 
 async function fileInfo(file) {
@@ -37,8 +38,9 @@ async function copyTree(source, target, overwrite = false) {
   }
 }
 
-function loaderEntry(entry) {
-  const file = entry.replace(/^BepInExPack\//i, '');
+function loaderEntry(entry, packName) {
+  const prefix = `${packName}/`;
+  const file = entry.toLowerCase().startsWith(prefix.toLowerCase()) ? entry.slice(prefix.length) : entry;
   const known = /^(bepinex)\/(core|config)\/(.+)$/i.exec(file);
   if (known) return `BepInEx/${known[2].toLowerCase()}/${known[3]}`;
   return LOADER_FILES.has(file.toLowerCase()) ? file.toLowerCase() : null;
@@ -57,11 +59,12 @@ function modEntry(entry, directory) {
   return `BepInEx/plugins/${directory}/${entry}`;
 }
 
-function createProfileBuilder(root, cache) {
+function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
+  if (!GAMES.has(gameId)) throw new Error('Choose a supported game for profile preparation.');
   const active = new Map();
 
   async function prepareProfile(id, entries) {
-    const base = profileDirectory(root, id);
+    const base = profileDirectory(root, id, gameId);
     if (!Array.isArray(entries) || entries.length > 200) throw new Error('Choose up to 200 enabled packages for this profile.');
     const refs = entries.map(entry => {
       if (typeof entry?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(entry.namespace) ||
@@ -71,8 +74,9 @@ function createProfileBuilder(root, cache) {
       }
       return { namespace: entry.namespace, name: entry.name, version: entry.version };
     }).sort((a, b) => a.namespace.localeCompare(b.namespace) || a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
-    const loader = refs.find(ref => ref.namespace === 'BepInEx' && ref.name === 'BepInExPack');
-    if (!loader) throw new Error('Download and enable BepInExPack in this Lethal Company profile.');
+    const loaderName = gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
+    const loader = refs.find(ref => ref.namespace === 'BepInEx' && ref.name === loaderName);
+    if (!loader) throw new Error(`Download and enable ${loaderName} in this ${GAMES.get(gameId)} profile.`);
     const key = createHash('sha256').update(JSON.stringify({ format: FORMAT, refs })).digest('hex');
     if (active.has(base)) throw new Error('This profile is already being prepared.');
     const operation = build(base, key, loader, refs);
@@ -101,17 +105,18 @@ function createProfileBuilder(root, cache) {
     const backup = path.join(base, `backup-${randomUUID()}`);
     try {
       await mkdir(next);
-      const packageList = [loader, ...refs.filter(ref => ref !== loader)];
+      const packageList = [loader, ...refs.filter(ref => ref !== loader &&
+        !(gameId === 'peak' && ref.namespace === 'BepInEx' && ref.name === 'BepInExPack'))];
       for (const [index, ref] of packageList.entries()) {
-        const { filename } = await cache.downloadPackage({ gameId: GAME, ...ref });
-        const archive = path.join(cache.root, GAME, filename);
+        const { filename } = await cache.downloadPackage({ gameId, ...ref });
+        const archive = path.join(cache.root, gameId, filename);
         const part = path.join(stage, `package-${index}`);
         const identity = `${ref.namespace}/${ref.name}`;
         const suffix = createHash('sha256').update(identity).digest('hex').slice(0, 12);
         const folder = `${ref.namespace.slice(0, 20)}-${ref.name.slice(0, 40)}-${suffix}`;
         await mkdir(part);
         try {
-          await extractArchive(archive, part, ref === loader ? loaderEntry : entry => modEntry(entry, folder));
+          await extractArchive(archive, part, ref === loader ? entry => loaderEntry(entry, loader.name) : entry => modEntry(entry, folder));
           await copyTree(part, next);
           await rm(part, { recursive: true, force: true });
         } catch (error) {
@@ -140,7 +145,7 @@ function createProfileBuilder(root, cache) {
   }
 
   async function openProfilePath(id) {
-    const runtime = path.join(profileDirectory(root, id), 'runtime');
+    const runtime = path.join(profileDirectory(root, id, gameId), 'runtime');
     if (!(await fileInfo(runtime))?.isDirectory()) throw new Error('Prepare this profile first.');
     return runtime;
   }

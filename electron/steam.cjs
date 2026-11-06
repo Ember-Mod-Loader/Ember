@@ -6,8 +6,17 @@ const { constants } = require('node:fs');
 const { lstat, readdir, readFile, realpath, open, unlink, mkdtemp, rename, copyFile, rmdir } = require('node:fs/promises');
 
 const exec = promisify(execFile);
-const GAME_ID = '1966720';
-const GAME_EXE = 'Lethal Company.exe';
+// Each launcher is bound to one Steam app. Never infer the game from a supplied path.
+const SUPPORTED_GAMES = Object.freeze({
+  'lethal-company': Object.freeze({ id: 'lethal-company', name: 'Lethal Company', steamId: '1966720', executable: 'Lethal Company.exe', dataDirectory: 'Lethal Company_Data' }),
+  repo: Object.freeze({ id: 'repo', name: 'R.E.P.O.', steamId: '3241660', executable: 'REPO.exe', dataDirectory: 'REPO_Data' }),
+  peak: Object.freeze({ id: 'peak', name: 'PEAK', steamId: '3527290', executable: 'PEAK.exe', dataDirectory: 'PEAK_Data' }),
+});
+
+function supportedGame(gameId) {
+  if (!Object.hasOwn(SUPPORTED_GAMES, gameId)) throw new Error('Choose a supported game.');
+  return SUPPORTED_GAMES[gameId];
+}
 const PROXY = 'winhttp.dll';
 const INI = 'doorstop_config.ini';
 const VERSION_FILE = '.doorstop_version';
@@ -65,7 +74,7 @@ async function steamRoots() {
   return values.filter(isLocalPath);
 }
 
-async function installedGames(findRoots) {
+async function installedGames(findRoots, game) {
   const installs = new Map();
   for (const root of await findRoots()) {
     if (!isLocalPath(root)) continue;
@@ -75,17 +84,17 @@ async function installedGames(findRoots) {
     const libraries = [root, ...Array.from(config.matchAll(/"path"\s+"((?:\\.|[^"\\])+)"/gi), match => match[1].replaceAll('\\\\', '\\'))];
     for (const library of libraries) {
       if (!isLocalPath(library)) continue;
-      const manifestFile = path.join(library, 'steamapps', `appmanifest_${GAME_ID}.acf`);
+      const manifestFile = path.join(library, 'steamapps', `appmanifest_${game.steamId}.acf`);
       const manifest = (await readSmall(manifestFile))?.toString('utf8') ?? '';
       const appId = /"appid"\s+"(\d+)"/i.exec(manifest)?.[1];
       const installDir = /"installdir"\s+"([^"]+)"/i.exec(manifest)?.[1];
-      if (appId !== GAME_ID || !installDir || !/^[^<>:"/\\|?*\x00-\x1f]+$/.test(installDir) || /^\.{1,2}$/.test(installDir)) continue;
+      if (appId !== game.steamId || !installDir || !/^[^<>:"/\\|?*\x00-\x1f]+$/.test(installDir) || /^\.{1,2}$/.test(installDir)) continue;
       const candidate = path.join(library, 'steamapps', 'common', installDir);
-      if (!(await info(path.join(candidate, GAME_EXE)))?.isFile() ||
-          !(await info(path.join(candidate, 'Lethal Company_Data')))?.isDirectory()) continue;
+      if (!(await info(path.join(candidate, game.executable)))?.isFile() ||
+          !(await info(path.join(candidate, game.dataDirectory)))?.isDirectory()) continue;
       const gameDir = await realpath(candidate);
       const key = absoluteKey(gameDir);
-      if (!installs.has(key)) installs.set(key, { gameDir, steamExe: await realpath(steamExe) });
+      if (!installs.has(key)) installs.set(key, { gameId: game.id, gameDir, steamExe: await realpath(steamExe) });
     }
   }
   return installs;
@@ -122,13 +131,16 @@ function isX64Pe(buffer) {
   return offset <= buffer.length - 6 && buffer.readUInt32LE(offset) === 0x4550 && buffer.readUInt16LE(offset + 4) === 0x8664;
 }
 
-async function doorstopFiles(dir) {
+async function doorstopFiles(dir, gameId = 'lethal-company') {
   const [proxy, config, version] = await Promise.all([
     readSmall(path.join(dir, PROXY)), readSmall(path.join(dir, INI), 128 * 1024), readSmall(path.join(dir, VERSION_FILE), 64),
   ]);
   if (!proxy || !config || !isX64Pe(proxy) || !proxyHasFlag(proxy, INI)) return null;
   const sections = readIni(config.toString('utf8'));
-  const major = sections?.has('general') && !sections.has('unitydoorstop') && /^4\.\d+\.\d+$/.test(version?.toString('utf8').trim() ?? '') &&
+  const versionText = version?.toString('utf8').trim() ?? '';
+  // The official PEAK pack ships its Doorstop fork with this exact version marker.
+  const knownVersion4 = /^4\.\d+\.\d+$/.test(versionText) || (gameId === 'peak' && versionText === '4.4.1PEAK');
+  const major = sections?.has('general') && !sections.has('unitydoorstop') && knownVersion4 &&
     proxyHasFlag(proxy, '--doorstop-enabled') && proxyHasFlag(proxy, '--doorstop-target-assembly') ? 4
     : sections?.has('unitydoorstop') && !sections.has('general') && !version &&
     proxyHasFlag(proxy, '--doorstop-enable') && proxyHasFlag(proxy, '--doorstop-target') ? 3 : 0;
@@ -165,7 +177,7 @@ async function inspectInstall(install) {
     if (OTHER_LOADERS.some(name => names.has(name))) return blocked;
     return { ...base, loader: 'clean', canLaunchVanilla: true, message: 'Set up the Doorstop loader to launch a modded profile.' };
   }
-  const files = await doorstopFiles(gameDir);
+  const files = await doorstopFiles(gameDir, install.gameId);
   if (!files) return blocked;
   const managed = ownsFiles(await readSmall(path.join(gameDir, OWNERSHIP_FILE), 4096), files);
   return {
@@ -175,39 +187,43 @@ async function inspectInstall(install) {
   };
 }
 
-async function ensureGameClosed() {
-  let stdout;
-  try {
-    ({ stdout } = await exec(systemExecutable('tasklist.exe'), ['/FI', `IMAGENAME eq ${GAME_EXE}`, '/FO', 'CSV', '/NH'], {
-      windowsHide: true, timeout: 5000,
-    }));
-  } catch {
-    throw new Error('Ember could not confirm whether Lethal Company is running.');
-  }
-  if (stdout.split(/\r?\n/).some(line => line.toLowerCase().startsWith(`"${GAME_EXE.toLowerCase()}"`))) {
-    throw new Error('Close Lethal Company before changing the loader or starting another session.');
-  }
+// Exact Windows executable basenames, also verified against the installed Steam games.
+const SUPPORTED_GAME_EXECUTABLES = new Map(Object.values(SUPPORTED_GAMES)
+  .map(game => [game.executable.toLowerCase(), game.name]));
+
+async function runningImages(run) {
+  const { stdout } = await run(systemExecutable('tasklist.exe'), ['/FO', 'CSV', '/NH'], {
+    windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024,
+  });
+  const lines = typeof stdout === 'string' ? stdout.trim().split(/\r?\n/).filter(Boolean) : [];
+  const names = lines.map(line => /^"([^"\r\n]+)",/.exec(line)?.[1].toLowerCase());
+  if (!names.length || names.some(name => !name)) throw new Error('Unreadable process enumeration.');
+  return names;
 }
 
-// Exact Windows executable basenames, also verified against the installed Steam games.
-const SUPPORTED_GAME_EXECUTABLES = new Map([
-  ['lethal company.exe', 'Lethal Company'], ['repo.exe', 'R.E.P.O.'], ['peak.exe', 'PEAK'],
-]);
+function createGameGuard({ gameId = 'lethal-company', run = exec, platform = process.platform } = {}) {
+  const game = supportedGame(gameId);
+  return async function assertGameClosed() {
+    if (platform !== 'win32') throw new Error('Game process checks are available only on Windows.');
+    let names;
+    try {
+      names = await runningImages(run);
+    } catch {
+      throw new Error(`Ember could not confirm whether ${game.name} is running.`);
+    }
+    if (names.includes(game.executable.toLowerCase())) {
+      throw new Error(`Close ${game.name} before changing the loader or starting another session.`);
+    }
+  };
+}
 
 function createSupportedGameGuard({ run = exec, platform = process.platform } = {}) {
   return async function assertSupportedGamesClosed() {
     if (platform !== 'win32') throw new Error('Game process checks are available only on Windows.');
-    let stdout;
+    let names;
     try {
-      ({ stdout } = await run(systemExecutable('tasklist.exe'), ['/FO', 'CSV', '/NH'], {
-        windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024,
-      }));
+      names = await runningImages(run);
     } catch {
-      throw new Error('Ember could not confirm whether supported games are running. Close them and try updating again.');
-    }
-    const lines = typeof stdout === 'string' ? stdout.trim().split(/\r?\n/).filter(Boolean) : [];
-    const names = lines.map(line => /^"([^"\r\n]+)",/.exec(line)?.[1].toLowerCase());
-    if (!names.length || names.some(name => !name)) {
       throw new Error('Ember could not confirm whether supported games are running. Close them and try updating again.');
     }
     const running = [...new Set(names.filter(name => SUPPORTED_GAME_EXECUTABLES.has(name)))]
@@ -229,11 +245,35 @@ function spawnSteam(executable, args) {
   });
 }
 
-function buildDisabledConfig(major) {
-  const [section, key, ignore] = major === 4
+function buildDisabledConfig(files) {
+  const [section, key, ignore] = files.major === 4
     ? ['General', 'target_assembly', 'ignore_disable_switch']
     : ['UnityDoorstop', 'targetAssembly', 'ignoreDisableSwitch'];
-  return Buffer.from(`[${section}]\r\nenabled=false\r\n${key}=BepInEx\\core\\BepInEx.Preloader.dll\r\n${ignore}=false\r\n`, 'utf8');
+  const changes = new Map([
+    ['enabled', ['enabled', 'false']], [key.toLowerCase(), [key, 'BepInEx\\core\\BepInEx.Preloader.dll']],
+    [ignore.toLowerCase(), [ignore, 'false']],
+  ]);
+  const output = [];
+  let inSection = false;
+  const appendMissing = () => {
+    for (const [name, value] of changes.values()) output.push(`${name}=${value}`);
+    changes.clear();
+  };
+  for (const line of files.config.toString('utf8').split(/\r?\n/)) {
+    const label = /^\s*\[([\w]+)\]\s*$/.exec(line)?.[1];
+    if (label) {
+      if (inSection) appendMissing();
+      inSection = label.toLowerCase() === section.toLowerCase();
+    }
+    const name = inSection && /^\s*([\w]+)\s*=/.exec(line)?.[1].toLowerCase();
+    const change = changes.get(name);
+    if (change) {
+      output.push(`${change[0]}=${change[1]}`);
+      changes.delete(name);
+    } else output.push(line);
+  }
+  if (inSection) appendMissing();
+  return Buffer.from(output.join('\r\n'), 'utf8');
 }
 
 async function installRootFiles(dir, files) {
@@ -316,25 +356,27 @@ async function removeRootFiles(dir, files) {
   }
 }
 
-function createSteamAdapter({ findRoots = steamRoots, assertClosed = ensureGameClosed, startSteam = spawnSteam } = {}) {
+function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots, assertClosed, startSteam = spawnSteam } = {}) {
+  const game = supportedGame(gameId);
+  assertClosed ??= createGameGuard({ gameId });
   let operation = false;
 
   async function getLaunchStatus(gameDir) {
-    if (!isLocalPath(gameDir)) throw new Error('Select a Lethal Company folder in a local Steam library.');
+    if (!isLocalPath(gameDir)) throw new Error(`Select a ${game.name} folder in a local Steam library.`);
     const canonical = await realpath(gameDir).catch(() => null);
-    const install = canonical && (await installedGames(findRoots)).get(absoluteKey(canonical));
-    if (!install) throw new Error('Choose the Lethal Company folder registered in your Steam library.');
+    const install = canonical && (await installedGames(findRoots, game)).get(absoluteKey(canonical));
+    if (!install) throw new Error(`Choose the ${game.name} folder registered in your Steam library.`);
     return inspectInstall(install);
   }
 
-  async function findLethalCompany() {
+  async function findGame() {
     if (process.platform !== 'win32') return null;
-    const [install] = (await installedGames(findRoots)).values();
+    const [install] = (await installedGames(findRoots, game)).values();
     return install ? inspectInstall(install) : null;
   }
 
   async function exclusive(callback) {
-    if (operation) throw new Error('A Lethal Company setup or launch is already in progress.');
+    if (operation) throw new Error(`A ${game.name} setup or launch is already in progress.`);
     operation = true;
     try {
       return await callback();
@@ -349,10 +391,10 @@ function createSteamAdapter({ findRoots = steamRoots, assertClosed = ensureGameC
       if (status.loader === 'managed') return status;
       if (status.loader !== 'clean') throw new Error('This Steam folder already contains loader files. Choose reuse for a compatible loader.');
       const canonical = isLocalPath(loaderPath) && await realpath(loaderPath).catch(() => null);
-      const files = canonical && await doorstopFiles(canonical);
+      const files = canonical && await doorstopFiles(canonical, game.id);
       if (!files) throw new Error('The staged profile needs an official Windows x64 BepInEx pack.');
       await assertClosed();
-      const config = buildDisabledConfig(files.major);
+      const config = buildDisabledConfig(files);
       const marker = Buffer.from(JSON.stringify({
         version: 1, proxy: digest(files.proxy), config: digest(config), doorstopVersion: files.version ? digest(files.version) : null,
       }) + '\n');
@@ -369,23 +411,23 @@ function createSteamAdapter({ findRoots = steamRoots, assertClosed = ensureGameC
       const status = await getLaunchStatus(gameDir);
       if (status.loader !== 'managed') throw new Error('Only unchanged loader files installed by Ember can be removed here.');
       await assertClosed();
-      const files = await doorstopFiles(status.gameDir);
+      const files = await doorstopFiles(status.gameDir, game.id);
       const marker = await readSmall(path.join(status.gameDir, OWNERSHIP_FILE), 4096);
       if (!files || !ownsFiles(marker, files)) throw new Error('The loader files changed. Ember left them in place.');
       const owned = [[PROXY, files.proxy], [INI, files.config]];
       if (files.version) owned.push([VERSION_FILE, files.version]);
       owned.push([OWNERSHIP_FILE, marker]);
       const backup = await removeRootFiles(status.gameDir, owned);
-      const result = await inspectInstall({ gameDir: status.gameDir, steamExe: status.steamExe });
+      const result = await inspectInstall({ gameId: game.id, gameDir: status.gameDir, steamExe: status.steamExe });
       return backup ? { ...result, message: `Loader removed. Windows kept a backup at ${backup}.` } : result;
     });
   }
 
-  async function launchLethalCompany({ gameDir, mode, profilePath, loaderPath = profilePath, allowExistingDoorstop = false, loaderFingerprint }) {
+  async function launchGame({ gameDir, mode, profilePath, loaderPath = profilePath, allowExistingDoorstop = false, loaderFingerprint }) {
     return exclusive(async () => {
       if (mode !== 'modded' && mode !== 'vanilla') throw new Error('Choose a modded or vanilla launch.');
       const status = await getLaunchStatus(gameDir);
-      const args = ['-applaunch', GAME_ID];
+      const args = ['-applaunch', game.steamId];
       const enable = status.doorstopMajor === 4 ? '--doorstop-enabled' : '--doorstop-enable';
       if (mode === 'vanilla') {
         if (!status.canLaunchVanilla) throw new Error('The game folder’s loader prevents Ember from safely launching vanilla.');
@@ -403,7 +445,7 @@ function createSteamAdapter({ findRoots = steamRoots, assertClosed = ensureGameC
           throw new Error('Prepare a profile containing the BepInEx preloader before launching.');
         }
         const loader = isLocalPath(loaderPath) && await realpath(loaderPath).catch(() => null);
-        const files = loader && await doorstopFiles(loader);
+        const files = loader && await doorstopFiles(loader, game.id);
         if (!files || files.major !== status.doorstopMajor) {
           throw new Error(`This game folder uses Doorstop ${status.doorstopMajor}. Use a profile with a matching BepInExPack version.`);
         }
@@ -415,8 +457,13 @@ function createSteamAdapter({ findRoots = steamRoots, assertClosed = ensureGameC
     });
   }
 
-  return { findLethalCompany, getLaunchStatus, prepareDoorstop, removeManagedDoorstop, launchLethalCompany, assertLethalCompanyClosed: assertClosed };
+  const adapter = { findGame, getLaunchStatus, prepareDoorstop, removeManagedDoorstop, launchGame, assertGameClosed: assertClosed };
+  if (gameId === 'lethal-company') Object.assign(adapter, {
+    findLethalCompany: findGame, launchLethalCompany: launchGame, assertLethalCompanyClosed: assertClosed,
+  });
+  return adapter;
 }
 
-module.exports = { ...createSteamAdapter(), createSteamAdapter, createSupportedGameGuard,
+module.exports = { ...createSteamAdapter(), createSteamAdapter, createGameLauncher: createSteamAdapter,
+  SUPPORTED_GAMES, createGameGuard, createSupportedGameGuard,
   assertSupportedGamesClosed: createSupportedGameGuard() };

@@ -10,4 +10,4 @@
 
 Ember is independently developed. The names of Thunderstore, Steam, and supported games identify compatible third-party services and products.
 
-The Lethal Company, R.E.P.O., and PEAK game picker icons are official Steam game artwork, credited to the respective game publishers. Ember flame and landscape artwork are based on the supplied brand references and prepared using image generation.
+The Lethal Company, R.E.P.O., and PEAK game picker icons are official Steam game artwork, credited to the respective game publishers. Ember branding and wallpapers are included with the project.
