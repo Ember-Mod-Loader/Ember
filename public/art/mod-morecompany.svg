@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#9e5159"/><stop offset="1" stop-color="#392944"/></linearGradient>
+    <pattern id="grid" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 0h1v1H0z" fill="#ffc99a" opacity=".24"/></pattern>
+  </defs>
+  <rect width="96" height="96" fill="url(#tile)"/>
+  <rect width="96" height="96" fill="url(#grid)"/>
+  <path d="M8 18V8h10m60 0h10v10m0 60v10H78m-60 0H8V78" fill="none" stroke="#ffc99a" stroke-opacity=".34" stroke-width="1.4"/>
+  <circle cx="48" cy="48" r="35" fill="#532c49" opacity=".43" stroke="#ec886f" stroke-width="1.5"/>
+  <path d="M17 66v-9l5-4h6l5 4v9m30 0v-9l5-4h6l5 4v9" fill="#9d4f63" stroke="#f08b7a" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M18 38l4-4h7l5 4v11l-5 4h-7l-4-4zm44 0 5-4h7l4 4v11l-4 4h-7l-5-4z" fill="#dc7769" stroke="#492c45" stroke-width="2.6"/>
+  <path d="M22 39h8v7h-8zm44 0h8v7h-8z" fill="#572f45"/>
+  <path d="M33 72V58l7-6h16l7 6v14z" fill="#d96b55" stroke="#3a273b" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M34 34l6-7h16l6 7v13l-6 7H40l-6-7z" fill="#ff9d73" stroke="#3a273b" stroke-width="3.3"/>
+  <path d="M40 35h16l3 3v7l-3 4H40l-3-4v-7z" fill="#4d2b40"/>
+  <path d="M42 38h11m-10 20v11m10-11v11" stroke="#ffd2a1" stroke-width="1.8" stroke-linecap="round"/>
+</svg>

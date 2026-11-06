@@ -1,0 +1,34 @@
+node_modules/
+dist/
+release/
+
+# Local environment and signing/authentication material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+
+# Personal workspaces, caches, and exports
+userdata/
+user-data/
+package-cache/
+profiles/
+downloads.json
+game-settings.json
+*.ember.json
+*.modrelay.json
+
+# Local tools and generated diagnostics
+.codex/
+tmp/
+temp/
+coverage/
+test-results/
+playwright-report/
+*.log
+Thumbs.db
+.DS_Store

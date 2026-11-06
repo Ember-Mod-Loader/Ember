@@ -1,0 +1,25 @@
+:root { color-scheme: dark; }
+body { margin: 0; background: #0d0d10; color: #f5f0eb; font-family: system-ui, sans-serif; }
+[hidden] { display: none !important; }
+.window-bar { height: 32px; position: fixed; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between; z-index: 20; background: #0d0d10; -webkit-app-region: drag; }
+.window-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; font-size: 11px; }
+.window-brand img { width: 17px; height: 21px; object-fit: contain; }
+.window-controls { display: flex; height: 32px; -webkit-app-region: no-drag; }
+.window-controls button { width: 46px; border: 0; background: transparent; color: #e1d8d0; cursor: pointer; display: grid; place-items: center; }
+.window-controls button:hover { background: #292426; }
+.window-controls button:last-child:hover { background: #c92b34; color: white; }
+.window-controls svg { stroke: currentColor; fill: none; stroke-width: 1; }
+.native-caption .window-controls { visibility: hidden; }
+.startup-screen { position: fixed; inset: 32px 0 0; z-index: 15; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: radial-gradient(ellipse at 50% 100%, #4b1b08 0, transparent 65%), #0d0d10; padding: 24px; text-align: center; }
+.startup-brand { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.startup-brand img { width: 88px; height: 112px; object-fit: contain; filter: drop-shadow(0 0 30px #ff6a0040); }
+.startup-brand strong { font-size: 44px; font-style: italic; font-weight: 850; letter-spacing: 4px; }
+.startup-brand span { font-size: 10px; letter-spacing: 5px; color: #baa99c; }
+.startup-status { color: #d3bfb0; font-size: 12px; }
+.startup-progress { width: 220px; height: 3px; accent-color: #ff6a00; }
+.startup-error { max-width: 460px; color: #ffbc94; font-size: 12px; }
+.startup-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.startup-actions button { padding: 8px 14px; border: 1px solid #704026; border-radius: 7px; background: #251811; color: #ffb377; cursor: pointer; }
+.startup-caption { margin-top: 20px; color: #9f8371; letter-spacing: 3px; font-size: 9px; }
+.startup-screen.leaving { opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+@media (prefers-reduced-motion: reduce) { .startup-screen.leaving { transition: none; } }

@@ -1,0 +1,133 @@
+name: Release Windows client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ember-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate release and skip existing versions
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Publish a stable major.minor.patch version.' }
+          $tag = 'v' + $version
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne $tag) { throw 'Tag must match package.json version.' }
+          $sourceCommit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Could not determine the release source commit.' }
+          $repository = if ($package.repository -is [string]) { $package.repository } else { $package.repository.url }
+          $repository = ([string]$repository -replace '^git\+', '' -replace '\.git$', '').TrimEnd('/')
+          if ($repository -ine ('https://github.com/' + $env:GITHUB_REPOSITORY)) { throw 'Set package.repository to this repository before publishing.' }
+          $publish = @($package.build.publish)[0]
+          if ($publish.provider -ne 'github' -or ($publish.owner + '/' + $publish.repo) -ine $env:GITHUB_REPOSITORY) { throw 'The GitHub update provider must match this repository.' }
+          $private = gh api ('repos/' + $env:GITHUB_REPOSITORY) --jq '.private'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect repository visibility.' }
+          if ($private -ne 'false') { throw 'Public client updates require a public release repository.' }
+          $existing = @(gh api ('repos/' + $env:GITHUB_REPOSITORY + '/releases?per_page=100') --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect existing releases.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "commit=$sourceCommit" >> $env:GITHUB_OUTPUT
+          if ($existing -contains $tag) {
+            'publish=false' >> $env:GITHUB_OUTPUT
+            Write-Output "Release $tag already exists; no artifacts will be replaced."
+            exit 0
+          }
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -eq 0) {
+            $existingTagCommit = git rev-parse "refs/tags/$tag^{commit}"
+            if ($LASTEXITCODE -ne 0 -or $existingTagCommit -ne $sourceCommit) { throw 'The version tag points at different source. Publish a new version or run the workflow on that tag.' }
+          } elseif ($LASTEXITCODE -ne 1) { throw 'Could not inspect the version tag.' }
+          foreach ($publishedTag in $existing) {
+            if ($publishedTag -match '^v(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -ge [version]$version) { throw 'The release version must be newer than every published stable release.' }
+          }
+          'publish=true' >> $env:GITHUB_OUTPUT
+      - name: Install locked dependencies
+        if: steps.plan.outputs.publish == 'true'
+        run: npm ci
+      - name: Test and package Windows x64
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm run package
+          if ($LASTEXITCODE -ne 0) { throw 'Client packaging failed.' }
+      - name: Verify updater manifest and prepare checksums
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          EMBER_RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:EMBER_RELEASE_VERSION
+          $setup = "Ember-$version-Windows-x64-Setup.exe"
+          $portable = "Ember-$version-Windows-x64.exe"
+          $artifacts = @($setup, $portable, "$setup.blockmap", 'latest.yml')
+          foreach ($artifact in $artifacts) {
+            $file = Get-Item -LiteralPath (Join-Path 'release' $artifact)
+            if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing release artifact: $artifact" }
+          }
+          $manifest = Get-Content -LiteralPath release/latest.yml -Raw
+          if ($manifest -notmatch ('(?m)^version:\s*' + [regex]::Escape($version) + '\s*$') -or -not $manifest.Contains($setup) -or $manifest -notmatch '(?m)^sha512:') { throw 'latest.yml does not describe this installer/version.' }
+          $documents = @('README.md', 'RELEASE-NOTES.md', 'PRIVACY.md', 'THIRD-PARTY-NOTICES.md', 'LICENSE')
+          foreach ($document in $documents) { Copy-Item -LiteralPath $document -Destination (Join-Path 'release' $document) }
+          $lines = foreach ($artifact in ($artifacts + $documents)) {
+            (Get-FileHash -LiteralPath (Join-Path 'release' $artifact) -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $artifact
+          }
+          Set-Content -LiteralPath release/SHA256SUMS.txt -Value $lines -Encoding ascii
+      - name: Publish the stable GitHub release
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EMBER_RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+          EMBER_RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+          EMBER_RELEASE_COMMIT: ${{ steps.plan.outputs.commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:EMBER_RELEASE_VERSION
+          $files = @(
+            "release/Ember-$version-Windows-x64-Setup.exe",
+            "release/Ember-$version-Windows-x64.exe",
+            "release/Ember-$version-Windows-x64-Setup.exe.blockmap",
+            'release/latest.yml', 'release/SHA256SUMS.txt',
+            'release/README.md', 'release/RELEASE-NOTES.md', 'release/PRIVACY.md',
+            'release/THIRD-PARTY-NOTICES.md', 'release/LICENSE'
+          )
+          gh release create $env:EMBER_RELEASE_TAG @files --repo $env:GITHUB_REPOSITORY --target $env:EMBER_RELEASE_COMMIT --title "Ember $version" --notes-file RELEASE-NOTES.md --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed. Inspect the draft before retrying; existing assets are never overwritten automatically.' }
+          gh release edit $env:EMBER_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed. The uploaded draft remains available for maintainer inspection.' }

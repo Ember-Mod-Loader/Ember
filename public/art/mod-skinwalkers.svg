@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#7053a2"/><stop offset="1" stop-color="#29223d"/></linearGradient>
+    <pattern id="grid" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 0h1v1H0z" fill="#e7d3ff" opacity=".24"/></pattern>
+  </defs>
+  <rect width="96" height="96" fill="url(#tile)"/>
+  <rect width="96" height="96" fill="url(#grid)"/>
+  <path d="M8 18V8h10m60 0h10v10m0 60v10H78m-60 0H8V78" fill="none" stroke="#e7d3ff" stroke-opacity=".34" stroke-width="1.4"/>
+  <circle cx="48" cy="48" r="29" fill="#262139" stroke="#a182d4" stroke-width="1.7"/>
+  <path d="M18 49c9-12 20-16 30-16s21 4 30 16c-9 12-20 16-30 16s-21-4-30-16z" fill="#b796ec"/>
+  <path d="M22 49c9-9 17-12 26-12s17 3 26 12c-9 9-17 12-26 12s-17-3-26-12z" fill="#372b51"/>
+  <circle cx="48" cy="49" r="9" fill="#e4c7ff"/>
+  <path d="m49 41-4 9 3 8 4-9z" fill="#45245c"/>
+  <path d="M29 26l4 5m31-5-4 5m-31 42 4-5m31 5-4-5m-12 10v7m0-76v7" stroke="#b796ec" stroke-width="2" stroke-linecap="round"/>
+</svg>

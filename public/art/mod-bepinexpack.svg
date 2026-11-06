@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#403b2b"/><stop offset="1" stop-color="#1d211c"/></linearGradient>
+    <pattern id="grid" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 0h1v1H0z" fill="#f9ce4a" opacity=".24"/></pattern>
+  </defs>
+  <rect width="96" height="96" fill="url(#tile)"/>
+  <rect width="96" height="96" fill="url(#grid)"/>
+  <path d="M8 18V8h10m60 0h10v10m0 60v10H78m-60 0H8V78" fill="none" stroke="#f9ce4a" stroke-opacity=".34" stroke-width="1.4"/>
+  <path d="M23 20h42l10 10v35L63 77H23z" fill="#22241b" stroke="#f4ce4e" stroke-width="2.5"/>
+  <path d="M36 29h21l8 8v10l-4 4 5 4v8l-8 8H36zm8 8v9h11l3-3v-3l-3-3zm0 17v9h12l3-3v-3l-3-3z" fill="#f7d348"/>
+  <path d="m16 67 7 7-4 4-7-7zm5-7 7 7-4 4-7-7zm50-41 7 7-4 4-7-7zm6-6 7 7-4 4-7-7z" fill="#f7d348" opacity=".71"/>
+</svg>

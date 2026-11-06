@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#525a9a"/><stop offset="1" stop-color="#292f57"/></linearGradient>
+    <pattern id="grid" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 0h1v1H0z" fill="#c8deff" opacity=".24"/></pattern>
+  </defs>
+  <rect width="96" height="96" fill="url(#tile)"/>
+  <rect width="96" height="96" fill="url(#grid)"/>
+  <path d="M8 18V8h10m60 0h10v10m0 60v10H78m-60 0H8V78" fill="none" stroke="#c8deff" stroke-opacity=".34" stroke-width="1.4"/>
+  <circle cx="48" cy="48" r="29" fill="#3f4779" stroke="#b7caff" stroke-width="1.4"/>
+  <path d="M27 58h42l8 7H19zm14-25 8-8 8 8 2 17H39z" fill="#a5b7f0"/>
+  <path d="M45 40h8v8h-8zm-4 11h16l5 7H36z" fill="#2c3864"/>
+  <path d="M48 60v16m-5-10v5m10-5v5M31 34v9m-4-4h8m32 0v11m-5-5h10" stroke="#c8deff" stroke-width="1.4" stroke-linecap="round"/>
+  <path d="M22 46h2v2h-2zm49-17h2v2h-2zm-14-8h2v2h-2z" fill="#c8deff"/>
+</svg>

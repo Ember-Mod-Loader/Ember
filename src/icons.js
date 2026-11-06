@@ -1,0 +1,36 @@
+const paths = {
+  compass: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0 0-7.8Z"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/><circle cx="9" cy="7" r="4"/>',
+  sliders: '<path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-4m0-4V3M2 10h4m4 2h4m4 5h4"/>',
+  settings: '<path d="M10 2h4l.6 3a8 8 0 0 1 1.7 1l2.9-1 2 3.5-2.3 2a8 8 0 0 1 0 2l2.3 2-2 3.5-2.9-1a8 8 0 0 1-1.7 1l-.6 3h-4l-.6-3a8 8 0 0 1-1.7-1l-2.9 1-2-3.5 2.3-2a8 8 0 0 1 0-2l-2.3-2 2-3.5 2.9 1a8 8 0 0 1 1.7-1Z"/><circle cx="12" cy="11.5" r="3"/>',
+  chevrons: '<path d="m8 9 4-4 4 4m-8 6 4 4 4-4"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  play: '<path d="m8 5 12 7-12 7V5Z" fill="currentColor" stroke-linejoin="round"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
+  sparkles: '<path d="M10 3c.9 4.2 2.8 6.1 7 7-4.2.9-6.1 2.8-7 7-.9-4.2-2.8-6.1-7-7 4.2-.9 6.1-2.8 7-7Zm9 10v8m-4-4h8"/>',
+  arrow: '<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  diagonal: '<path d="M7 17 17 7M7 7h10v10"/>',
+  download: '<path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>',
+  upload: '<path d="M12 16V4m-4 4 4-4 4 4M5 16v4h14v-4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  package: '<path d="m12 3 9 5v8l-9 5-9-5V8l9-5Zm0 9v9m-9-13 9 4 9-4M7.5 5.5l9 4.5"/>',
+  sort: '<path d="M4 7h11M4 12h8m-8 5h5m8-3v6m-3-3 3 3 3-3"/>',
+  gamepad: '<path d="M6.2 7h11.6a4.3 4.3 0 0 1 4.2 3.6l1 5.2a2.9 2.9 0 0 1-4.9 2.6L15 15H9l-3.1 3.4A2.9 2.9 0 0 1 1 15.8l1-5.2A4.3 4.3 0 0 1 6.2 7ZM6 11v4m-2-2h4m8-1h.01m4 2h.01"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-1.8 6M20 4v7h-7"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+  edit: '<path d="m13 6 5 5M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>',
+  file: '<path d="M6 3h8l4 4v14H6V3Zm8 0v5h4m-9 4h6m-6 4h6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+};
+
+export function icon(name, size = 18) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? paths.package}</svg>`;
+}

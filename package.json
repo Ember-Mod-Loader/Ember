@@ -1,0 +1,108 @@
+{
+  "name": "modrelay",
+  "productName": "Ember",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Open-source Thunderstore mod manager for Windows",
+  "author": "Ember",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "npm run build && electron .",
+    "test": "node --test",
+    "package": "npm test && npm run build && electron-builder --win nsis portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@fontsource-variable/space-grotesk": "5.3.0",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "vite": "8.3.5"
+  },
+  "build": {
+    "appId": "com.modrelay.desktop",
+    "productName": "Ember",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/*.cjs",
+      "electron/icon.ico",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/@fontsource-variable/manrope/LICENSE",
+        "to": "licenses/Manrope-OFL.txt"
+      },
+      {
+        "from": "node_modules/@fontsource-variable/space-grotesk/LICENSE",
+        "to": "licenses/Space-Grotesk-OFL.txt"
+      },
+      {
+        "from": "node_modules/yauzl/LICENSE",
+        "to": "licenses/Yauzl.txt"
+      },
+      {
+        "from": "node_modules/pend/LICENSE",
+        "to": "licenses/Pend.txt"
+      },
+      "PRIVACY.md",
+      "THIRD-PARTY-NOTICES.md",
+      "LICENSE",
+      {
+        "from": "node_modules/electron-updater/LICENSE",
+        "to": "licenses/Electron-Updater.txt"
+      }
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "win": {
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-Windows-${arch}-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Ember-Mod-Loader",
+        "repo": "Ember",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11",
+    "yauzl": "3.4.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ember-Mod-Loader/Ember.git"
+  },
+  "homepage": "https://github.com/Ember-Mod-Loader/Ember",
+  "bugs": {
+    "url": "https://github.com/Ember-Mod-Loader/Ember/issues"
+  }
+}

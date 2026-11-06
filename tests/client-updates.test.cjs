@@ -1,0 +1,240 @@
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const test = require('node:test');
+const { setImmediate: tick } = require('node:timers/promises');
+const { createClientUpdates } = require('../electron/client-updates.cjs');
+
+function mockUpdater() {
+  const updater = new EventEmitter();
+  updater.checks = 0;
+  updater.installs = [];
+  updater.checkForUpdates = async () => {
+    updater.checks++;
+    updater.emit('checking-for-update');
+    updater.emit('update-not-available', { version: '0.5.0' });
+    return { updateInfo: { version: '0.5.0' } };
+  };
+  updater.quitAndInstall = (...args) => updater.installs.push(args);
+  return updater;
+}
+
+function options(updater, extra = {}) { return { updater, version: '0.5.0', ...extra }; }
+
+test('installed updater uses verified library downloads and defensive status snapshots', () => {
+  const updater = mockUpdater();
+  const client = createClientUpdates(options(updater, { publish: state => { state.latestVersion = 'mutated'; } }));
+  assert.equal(updater.autoDownload, true);
+  assert.equal(updater.autoInstallOnAppQuit, false);
+  assert.equal(updater.allowPrerelease, false);
+  assert.equal(updater.allowDowngrade, false);
+  updater.emit('update-available', { version: '0.5.1', releaseNotes: '<script>no</script>' });
+  const snapshot = client.getStatus();
+  assert.equal(snapshot.status, 'available');
+  assert.equal(snapshot.latestVersion, '0.5.1');
+  assert.equal(snapshot.releaseNotes, undefined);
+  snapshot.message = 'overwritten';
+  assert.notEqual(client.getStatus().message, snapshot.message);
+  client.dispose();
+});
+
+test('concurrent manual checks coalesce and only a server no-update event reports up-to-date', async () => {
+  const updater = mockUpdater();
+  let resolve;
+  updater.checkForUpdates = () => {
+    updater.checks++;
+    return new Promise(done => { resolve = done; });
+  };
+  const client = createClientUpdates(options(updater));
+  const first = client.checkForUpdates();
+  const second = client.checkForUpdates();
+  assert.equal(first, second);
+  await tick();
+  assert.equal(updater.checks, 1);
+  assert.equal(client.getStatus().status, 'checking');
+  updater.emit('update-not-available');
+  resolve({ updateInfo: { version: '0.5.0' } });
+  assert.equal((await first).status, 'up-to-date');
+  updater.checkForUpdates = async () => { updater.checks++; updater.emit('update-not-available'); return {}; };
+  assert.equal((await client.checkForUpdates()).status, 'up-to-date');
+  assert.equal(updater.checks, 2);
+});
+
+test('manual available update progresses to ready and installs only when explicitly requested', async () => {
+  const updater = mockUpdater();
+  const events = [];
+  updater.checkForUpdates = async () => {
+    updater.checks++;
+    updater.emit('update-available', { version: '0.5.1' });
+    return { downloadPromise: Promise.resolve([]) };
+  };
+  let prepared = 0;
+  const client = createClientUpdates(options(updater, { publish: state => events.push(state), beforeInstall: () => { prepared++; } }));
+  await client.checkForUpdates();
+  updater.emit('download-progress', { percent: 52.5, transferred: 525, total: 1000, bytesPerSecond: 42 });
+  assert.deepEqual(client.getStatus().progress, { percent: 52.5, transferred: 525, total: 1000, bytesPerSecond: 42 });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(client.getStatus().status, 'downloaded');
+  assert.equal(updater.installs.length, 0);
+  await client.checkForUpdates();
+  assert.equal(updater.checks, 1);
+  await Promise.all([client.installUpdate(), client.installUpdate()]);
+  assert.equal(prepared, 1);
+  assert.deepEqual(updater.installs, [[false, true]]);
+  assert.equal(client.getStatus().status, 'installing');
+  assert.equal(events.at(-1).status, 'installing');
+});
+
+test('startup checks automatically install a downloaded update only after the safety check', async () => {
+  const updater = mockUpdater();
+  const calls = [];
+  updater.checkForUpdates = async () => {
+    updater.emit('update-available', { version: '0.5.1' });
+    return {};
+  };
+  const client = createClientUpdates(options(updater, {
+    canInstall: async () => { calls.push('safe'); return true; },
+    beforeInstall: () => { calls.push('reserve'); },
+  }));
+  await client.checkForUpdates({ automatic: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.deepEqual(calls, ['safe', 'reserve']);
+  assert.deepEqual(updater.installs, [[true, true]]);
+});
+
+test('busy or running-game guards preserve the ready update and allow a later safe retry', async () => {
+  for (const denied of [() => false, () => undefined, () => { throw new Error('Game is running'); }]) {
+    const updater = mockUpdater();
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+    let guard = denied;
+    let prepared = 0;
+    const client = createClientUpdates(options(updater, { canInstall: () => guard(), beforeInstall: () => { prepared++; } }));
+    await client.checkForUpdates({ automatic: true });
+    updater.emit('update-downloaded', { version: '0.5.1' });
+    await tick();
+    assert.equal(client.getStatus().status, 'downloaded');
+    assert.equal(client.getStatus().installBlocked, true);
+    assert.equal(updater.installs.length, 0);
+    assert.equal(prepared, 0);
+    await client.installUpdate();
+    assert.equal(updater.installs.length, 0);
+    guard = () => true;
+    await client.installUpdate();
+    assert.equal(prepared, 1);
+    assert.deepEqual(updater.installs, [[false, true]]);
+  }
+});
+
+test('portable and development builds never query or install updates', async () => {
+  for (const extra of [{ portable: true }, { enabled: false }]) {
+    const updater = mockUpdater();
+    const client = createClientUpdates(options(updater, extra));
+    assert.equal((await client.checkForUpdates({ automatic: true })).status, 'unsupported');
+    await client.installUpdate();
+    assert.equal(updater.checks, 0);
+    assert.deepEqual(updater.installs, []);
+    assert.equal(updater.listenerCount('update-downloaded'), 0);
+    client.dispose();
+  }
+});
+
+test('automatic retry installs after busy work ends without installing manually downloaded updates', async () => {
+  for (const automatic of [true, false]) {
+    const updater = mockUpdater();
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+    let safe = false;
+    const client = createClientUpdates(options(updater, { canInstall: () => safe }));
+    await client.checkForUpdates({ automatic });
+    updater.emit('update-downloaded', { version: '0.5.1' });
+    await tick();
+    assert.equal(updater.installs.length, 0);
+    safe = true;
+    await client.retryAutomaticInstall();
+    assert.deepEqual(updater.installs, automatic ? [[true, true]] : []);
+    if (!automatic) assert.equal(client.getStatus().status, 'downloaded');
+  }
+});
+
+test('startup retry survives a reservation race but stops automatically retrying a failed installer launch', async () => {
+  const updater = mockUpdater();
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  let reserve = false;
+  const client = createClientUpdates(options(updater, { beforeInstall: () => { if (!reserve) throw new Error('Work started meanwhile'); } }));
+  await client.checkForUpdates({ automatic: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(client.getStatus().status, 'downloaded');
+  assert.equal(client.getStatus().installBlocked, true);
+  reserve = true;
+  updater.quitAndInstall = () => { updater.installs.push('attempt'); throw new Error('Installer could not start'); };
+  await client.retryAutomaticInstall();
+  assert.deepEqual(updater.installs, ['attempt']);
+  await client.retryAutomaticInstall();
+  assert.deepEqual(updater.installs, ['attempt']);
+  updater.quitAndInstall = (...args) => updater.installs.push(args);
+  await client.installUpdate();
+  assert.deepEqual(updater.installs, ['attempt', [false, true]]);
+});
+
+test('missing first release and network failures are retryable and never claim up-to-date', async () => {
+  const updater = mockUpdater();
+  let error = new Error('404 latest.yml not found');
+  updater.checkForUpdates = async () => { throw error; };
+  const client = createClientUpdates(options(updater));
+  assert.match((await client.checkForUpdates()).message, /No published client update/);
+  assert.equal(client.getStatus().status, 'error');
+  error = Object.assign(new Error('private internal details'), { code: 'ENOTFOUND' });
+  assert.match((await client.checkForUpdates()).message, /Check your connection/);
+  updater.checkForUpdates = async () => { updater.emit('update-not-available'); return {}; };
+  assert.equal((await client.checkForUpdates()).status, 'up-to-date');
+});
+
+test('auto-download promise rejections are observed and verification failures remain visible', async () => {
+  const updater = mockUpdater();
+  let reject;
+  updater.checkForUpdates = async () => {
+    updater.emit('update-available', { version: '0.5.1' });
+    return { downloadPromise: new Promise((_, fail) => { reject = fail; }) };
+  };
+  const client = createClientUpdates(options(updater));
+  await client.checkForUpdates({ automatic: true });
+  reject(new Error('sha512 checksum mismatch, secret URL omitted'));
+  await tick();
+  assert.equal(client.getStatus().status, 'error');
+  assert.match(client.getStatus().message, /did not pass verification/);
+  assert.equal(client.getStatus().message.includes('secret URL'), false);
+  assert.equal(updater.installs.length, 0);
+});
+
+test('progress values are bounded and invalid metadata never initiates installation', async () => {
+  const updater = mockUpdater();
+  const client = createClientUpdates(options(updater));
+  updater.emit('download-progress', { percent: Infinity, transferred: -1, total: NaN, bytesPerSecond: 1e25 });
+  assert.deepEqual(client.getStatus().progress, { percent: 0, transferred: 0, total: 0, bytesPerSecond: Number.MAX_SAFE_INTEGER });
+  updater.emit('download-progress', { percent: 200, transferred: 2.9, total: 3.9, bytesPerSecond: -1 });
+  assert.deepEqual(client.getStatus().progress, { percent: 100, transferred: 2, total: 3, bytesPerSecond: 0 });
+  updater.emit('update-downloaded', { version: '<b>bad</b>' });
+  await client.installUpdate();
+  assert.equal(client.getStatus().status, 'error');
+  assert.equal(updater.installs.length, 0);
+});
+
+test('failed pre-install reservation never starts the installer, and disposal drops later events', async () => {
+  const updater = mockUpdater();
+  const events = [];
+  const client = createClientUpdates(options(updater, { publish: status => events.push(status), beforeInstall: () => { throw new Error('Busy'); } }));
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await client.installUpdate();
+  assert.equal(client.getStatus().status, 'downloaded');
+  assert.equal(client.getStatus().installBlocked, true);
+  assert.equal(updater.installs.length, 0);
+  const before = client.getStatus();
+  const count = events.length;
+  client.dispose();
+  updater.emit('update-downloaded', { version: '0.5.2' });
+  assert.deepEqual(await client.checkForUpdates(), before);
+  assert.deepEqual(await client.installUpdate(), before);
+  assert.equal(events.length, count);
+  assert.equal(updater.listenerCount('update-downloaded'), 0);
+});
