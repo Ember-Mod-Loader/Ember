@@ -4,6 +4,7 @@ import './styles.css';
 import { GAMES, getGame } from './catalog.js';
 import { createManager, MAX_IMPORT_LENGTH, PROFILE_NAME_LIMIT, WALLPAPERS } from './model.js';
 import { icon } from './icons.js';
+import { createStartupUpdateFlow } from './startup-updates.js';
 
 const desktop = window.modRelayDesktop;
 const CLIENT_VERSION = __APP_VERSION__;
@@ -15,6 +16,7 @@ const dialog = document.querySelector('#dialog');
 const toasts = document.querySelector('#toasts');
 const startup = document.querySelector('#startup');
 let startupRunning = false;
+let clientUpdateEventsSeen = 0;
 const pages = {
   browse: ['Browse mods', 'compass'],
   library: ['Installed mods', 'layers'],
@@ -28,6 +30,11 @@ const displayTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', ti
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
 const ui = { page: 'browse', query: '', category: '', sort: '', library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
+const startupUpdates = createStartupUpdateFlow({
+  start: typeof desktop?.startupClientUpdate === 'function' ? () => desktop.startupClientUpdate() : undefined,
+  finish: () => desktop?.finishClientStartup?.(),
+  onStatus: status => { ui.clientUpdate = status; renderStartupUpdate(status); },
+});
 let presenceState = { status: typeof desktop?.presenceStatus === 'function' ? 'connecting' : 'not-configured', count: null, updatedAt: null };
 let presenceEventsSeen = 0;
 let requestNumber = 0;
@@ -1052,6 +1059,8 @@ function updateClientState(status) {
   ui.clientUpdate = status;
   const message = app.querySelector('#client-update-message');
   if (message) message.textContent = status.message;
+  startupUpdates.update(status);
+  if (startup.dataset.ready !== 'true') return;
   if (status.status === 'installing' && !ui.dialog) openDialog('client-update', {});
   else if (ui.dialog?.type === 'client-update') renderDialog();
 }
@@ -1082,7 +1091,7 @@ async function handleAction(action, id) {
   const mod = manager.packageById(id);
   switch (action) {
     case 'retry-startup': await startWorkspace(); break;
-    case 'offline-startup': revealWorkspace(); break;
+    case 'offline-startup': await finishStartupAndReveal(); break;
     case 'navigate': navigate(id); break;
     case 'menu': ui.menu = !ui.menu; render(); break;
     case 'games': openDialog('games'); break;
@@ -1406,7 +1415,7 @@ dialog.addEventListener('cancel', event => {
 });
 
 document.addEventListener('keydown', event => {
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' || dialog.open) return;
+  if (startup.dataset.ready !== 'true' || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' || dialog.open) return;
   event.preventDefault();
   if (!document.querySelector('#search-input')) navigate('browse');
   document.querySelector('#search-input')?.focus();
@@ -1414,6 +1423,50 @@ document.addEventListener('keydown', event => {
 
 function startupMessage(message) {
   startup.querySelector('.startup-status').textContent = message;
+}
+
+function renderStartupUpdate(status) {
+  startup.dataset.phase = status.status;
+  const progress = startup.querySelector('.startup-progress');
+  const details = startup.querySelector('.startup-detail');
+  const target = status.latestVersion ? `Ember ${status.latestVersion}` : 'Ember';
+  progress.hidden = false;
+  progress.removeAttribute('value');
+  progress.setAttribute('aria-label', 'Updating Ember');
+  details.textContent = '';
+  switch (status.status) {
+    case 'checking': startupMessage('Checking for updates…'); details.textContent = 'Looking for the latest Ember release.'; break;
+    case 'available': startupMessage(`Preparing ${target}…`); details.textContent = 'Your update will install before Ember opens.'; break;
+    case 'downloading': {
+      startupMessage(`Downloading ${target}…`);
+      if (Number.isFinite(status.progress?.percent)) {
+        const percent = Math.min(100, Math.max(0, status.progress.percent));
+        progress.max = 100;
+        progress.value = percent;
+        details.textContent = `${Math.round(percent)}% downloaded`;
+      } else details.textContent = 'Downloading your update.';
+      break;
+    }
+    case 'downloaded':
+      startupMessage(status.installBlocked ? 'Your update is ready for later.' : `Preparing to update ${target}…`);
+      details.textContent = status.installBlocked ? 'Continue in Settings → Update client.' : 'Ember will reopen automatically.';
+      break;
+    case 'installing': startupMessage(`Updating ${target}…`); details.textContent = 'Ember will reopen automatically. Please wait.'; break;
+    case 'up-to-date': startupMessage('Ember is up to date.'); details.textContent = 'Opening your workspace…'; break;
+    case 'unsupported': startupMessage('Opening Ember…'); details.textContent = 'This version uses manual client updates.'; break;
+    case 'error': startupMessage('Continuing to your workspace…'); details.textContent = status.message || 'Could not check for updates. Try again in Settings.'; break;
+    default: startupMessage('Opening your workspace…');
+  }
+  details.hidden = !details.textContent;
+}
+
+async function finishStartupAndReveal() {
+  const status = await desktop?.finishClientStartup?.();
+  if (status?.status === 'installing' || ui.clientUpdate?.status === 'installing') {
+    renderStartupUpdate(status?.status === 'installing' ? status : ui.clientUpdate);
+    return;
+  }
+  revealWorkspace();
 }
 
 async function preloadArt(path) {
@@ -1442,10 +1495,20 @@ async function startWorkspace() {
   startup.querySelector('.startup-error').hidden = true;
   startup.querySelector('.startup-actions').hidden = true;
   startup.querySelector('.startup-progress').hidden = false;
-  startupMessage('Loading your Ember workspace…');
   let deadline;
   let thumbnailDeadline;
   try {
+    await startupUpdates.run();
+    if (typeof desktop?.startupClientUpdate !== 'function') await desktop?.finishClientStartup?.();
+    if (ui.clientUpdate?.status === 'installing') return;
+    if (ui.clientUpdate && ['up-to-date', 'unsupported', 'error'].includes(ui.clientUpdate.status)) {
+      await new Promise(resolve => window.setTimeout(resolve, 450));
+    }
+    startup.dataset.phase = 'workspace';
+    startup.querySelector('.startup-progress').removeAttribute('value');
+    startup.querySelector('.startup-progress').setAttribute('aria-label', 'Loading Ember');
+    startup.querySelector('.startup-detail').hidden = true;
+    startupMessage('Loading your Ember workspace…');
     const artwork = Promise.all([
       preloadArt('/art/ember-flame.png'),
       preloadArt(WALLPAPERS.find(item => item.id === manager.state.settings.wallpaper).file),
@@ -1468,7 +1531,7 @@ async function startWorkspace() {
       new Promise(resolve => { thumbnailDeadline = window.setTimeout(resolve, 5000); }),
     ]);
     startupMessage('Ready to play.');
-    revealWorkspace();
+    await finishStartupAndReveal();
   } catch (error) {
     startupMessage('Ember needs a moment.');
     const field = startup.querySelector('.startup-error');
@@ -1496,8 +1559,13 @@ function updateWindowState(state) {
 desktop?.onWindowState?.(updateWindowState);
 desktop?.windowState?.().then(updateWindowState);
 desktop?.onDownloadProgress?.(updateDownloadRecord);
-desktop?.onClientUpdate?.(updateClientState);
-void desktop?.clientUpdateStatus?.().then(updateClientState).catch(() => {});
+desktop?.onClientUpdate?.(status => { clientUpdateEventsSeen++; updateClientState(status); });
+if (typeof desktop?.startupClientUpdate !== 'function') {
+  const initialUpdateEvent = clientUpdateEventsSeen;
+  void desktop?.clientUpdateStatus?.().then(status => {
+    if (clientUpdateEventsSeen === initialUpdateEvent) updateClientState(status);
+  }).catch(() => {});
+}
 
 try {
   const unsubscribe = desktop?.onPresence?.(status => {

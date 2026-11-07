@@ -89,9 +89,9 @@ Choose **Settings → Wallpapers** for **Main**, **Ember Flow**, **Aurora**, **O
 <details>
 <summary><strong>Client updates</strong></summary>
 
-Installed Windows clients check GitHub Releases at startup and download newer stable releases. Ember restarts to install when the game is closed and no download, profile operation, or editing dialog is active. **Settings → Update client** shows progress, retry, and **Install and restart**. A failed check leaves your workspace usable.
+Installed Windows clients check GitHub Releases on the loading screen before opening your library. The screen shows checking, download progress, and installation status. Ember reopens automatically after installing an update when the game is closed and no download or profile operation is active. **Settings → Update client** shows progress, retry, and **Install and restart**. Failed or stalled update checks let you continue into your workspace.
 
-**0.5.3 update safeguards:** cached installers for the same or an older version are ignored. If an automatic update handoff appears not to have completed, Ember pauses repeated automatic restarts for that update; **Install and restart** remains available. Before an automatic restart, a dialog explains what is happening. If installation is blocked or fails to start, the normal controls return.
+Cached installers for the same or an older version are ignored. If an automatic update handoff appears not to have completed, Ember pauses repeated automatic restarts for that update; **Install and restart** remains available. Updates started from the workspace show a restart dialog. If installation is blocked or fails to start, the normal controls return.
 
 Portable builds use the release page for manual replacement.
 

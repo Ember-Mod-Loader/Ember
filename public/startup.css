@@ -15,11 +15,15 @@ body { margin: 0; background: #0d0d10; color: #f5f0eb; font-family: system-ui, s
 .startup-brand img { width: 88px; height: 112px; object-fit: contain; filter: drop-shadow(0 0 30px #ff6a0040); }
 .startup-brand strong { font-size: 44px; font-style: italic; font-weight: 850; letter-spacing: 4px; }
 .startup-brand span { font-size: 10px; letter-spacing: 5px; color: #baa99c; }
-.startup-status { color: #d3bfb0; font-size: 12px; }
-.startup-progress { width: 220px; height: 3px; accent-color: #ff6a00; }
+.startup-screen .startup-status { color: #f1dfd1; font-size: 15px; font-weight: 600; margin: 20px 0 12px; }
+.startup-screen .startup-progress { width: min(280px, 80vw); height: 5px; accent-color: #ff6a00; border: 0; border-radius: 6px; overflow: hidden; }
+.startup-progress::-webkit-progress-bar { background: #38251c; border-radius: 6px; }
+.startup-progress::-webkit-progress-value { background: linear-gradient(90deg, #ff6a00, #ffb13b); border-radius: 6px; transition: width .18s ease; }
+.startup-detail { max-width: 430px; color: #b9a99d; font-size: 12px; line-height: 1.65; margin: -9px 0 0; }
+.startup-screen[data-phase="installing"] .startup-brand img { filter: drop-shadow(0 0 36px #ff6a0080); }
 .startup-error { max-width: 460px; color: #ffbc94; font-size: 12px; }
 .startup-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .startup-actions button { padding: 8px 14px; border: 1px solid #704026; border-radius: 7px; background: #251811; color: #ffb377; cursor: pointer; }
 .startup-caption { margin-top: 20px; color: #9f8371; letter-spacing: 3px; font-size: 9px; }
 .startup-screen.leaving { opacity: 0; pointer-events: none; transition: opacity .25s ease; }
-@media (prefers-reduced-motion: reduce) { .startup-screen.leaving { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .startup-screen.leaving, .startup-progress::-webkit-progress-value { transition: none; } }

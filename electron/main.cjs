@@ -11,6 +11,7 @@ const { createDownloadHistory } = require('./download-history.cjs');
 const { createSharingClient } = require('./sharing.cjs');
 const { createClientUpdates } = require('./client-updates.cjs');
 const { createUpdateAttempts } = require('./update-attempts.cjs');
+const { createStartupUpdates } = require('./startup-updates.cjs');
 const { createPresence } = require('./presence.cjs');
 const { acquirePresenceLease } = require('./presence-lease.cjs');
 const { createQuitCoordinator } = require('./quit-coordinator.cjs');
@@ -28,6 +29,7 @@ let updateHandoffReady = false;
 let quittingClient = false;
 let quitCoordinator;
 let diagnostics;
+let startupUpdates;
 let rendererBusy = true;
 let gameWorkBusy = () => false;
 const RELEASES_URL = 'https://github.com/Ember-Mod-Loader/Ember/releases/latest';
@@ -116,11 +118,15 @@ function handle(channel, action) {
         event.senderFrame !== window.webContents.mainFrame || !isAppUrl(event.senderFrame.url)) {
       throw new Error('This action is only available in the Ember window.');
     }
-    if (installingClient && !['client-update-status', 'window-state', 'window-command'].includes(channel)) {
+    const startupControls = ['startup-client-update', 'finish-client-startup', 'client-update-status', 'presence-status', 'window-state', 'window-command', 'client-ui-busy'];
+    if (installingClient && !startupControls.includes(channel)) {
       throw new Error('Ember is restarting to install a client update.');
     }
     if (quittingClient && !['client-update-status', 'presence-status', 'window-state', 'window-command'].includes(channel)) {
       throw new Error('Ember is closing. Open it again to continue.');
+    }
+    if (startupUpdates?.isActive() && !startupControls.includes(channel)) {
+      throw new Error('Ember is checking for updates. Wait for startup to finish.');
     }
     return action(...args);
   });
@@ -258,7 +264,7 @@ if (!app.requestSingleInstanceLock()) {
     const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE);
     const installed = app.isPackaged && process.platform === 'win32' && !portable &&
       existsSync(path.join(path.dirname(app.getPath('exe')), 'Uninstall Ember.exe'));
-    const hasActiveWork = () => installingClient || rendererBusy || gameWorkBusy() ||
+    const hasActiveWork = () => installingClient || quittingClient || (rendererBusy && !startupUpdates?.isActive()) || gameWorkBusy() ||
       history.list().some(record => ['resolving', 'downloading', 'saving'].includes(record.status));
     const updateAttempts = createUpdateAttempts(path.join(app.getPath('userData'), 'client-update-attempt.json'), { version: app.getVersion() });
     const clientUpdates = createClientUpdates({
@@ -293,6 +299,13 @@ if (!app.requestSingleInstanceLock()) {
         updateHandoffReady = true;
       },
     });
+    startupUpdates = createStartupUpdates({
+      getStatus: () => clientUpdates.getStatus(),
+      checkForUpdates: options => clientUpdates.checkForUpdates(options),
+      isInstalling: () => installingClient,
+    });
+    handle('startup-client-update', () => startupUpdates.start());
+    handle('finish-client-startup', () => startupUpdates.finish());
     handle('client-update', () => clientUpdates.checkForUpdates());
     handle('client-update-status', () => clientUpdates.getStatus());
     handle('install-client-update', () => clientUpdates.installUpdate());
@@ -351,10 +364,8 @@ if (!app.requestSingleInstanceLock()) {
       callback(permission === 'clipboard-sanitized-write' && isAppUrl(contents.getURL()));
     });
     createWindow();
-    // Update availability never blocks workspace startup or offline mod management.
     window.webContents.once('did-finish-load', () => {
       presence.start();
-      if (installed) void clientUpdates.checkForUpdates({ automatic: true });
     });
   }).catch(error => {
     diagnostics?.log('startup-failed', { error: errorDetails(error) });

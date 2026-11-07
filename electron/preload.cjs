@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('modRelayDesktop', {
     return () => ipcRenderer.removeListener('modrelay:presence-state', listener);
   },
   checkClientUpdate: () => ipcRenderer.invoke('modrelay:client-update'),
+  startupClientUpdate: () => ipcRenderer.invoke('modrelay:startup-client-update'),
+  finishClientStartup: () => ipcRenderer.invoke('modrelay:finish-client-startup'),
   clientUpdateStatus: () => ipcRenderer.invoke('modrelay:client-update-status'),
   installClientUpdate: () => ipcRenderer.invoke('modrelay:install-client-update'),
   openClientReleasePage: () => ipcRenderer.invoke('modrelay:client-release-page'),
