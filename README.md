@@ -38,7 +38,7 @@ Browse each game's Thunderstore catalog, install mods with their dependencies, a
 - **Find your next mod.** Search, filter by category, and sort by downloads, recent updates, rating, or newest. More results load automatically.
 - **Keep control of your collection.** Enable, disable, update, or remove individual mods. Dependency prompts explain which other mods are affected.
 - **See what's happening.** Follow package progress in Downloads and check the installed and enabled counts for your current profile.
-- **See the community online.** A small header counter shows active Ember app sessions. It refreshes about every 30 seconds, and inactive sessions expire after 90 seconds. No account or persistent device identifier is needed.
+- **See the community online.** A small header counter shows active Ember app sessions. It refreshes about every 30 seconds, and inactive sessions expire after 90 seconds. A temporary local session lease stays valid for 120 seconds between renewals so quick restarts can reuse the session. No account or stable device identifier is needed.
 - **Make it yours.** Choose one of six wallpapers. Your background stays with you across profiles, games, and restarts.
 
 ## Start playing
@@ -91,9 +91,20 @@ Choose **Settings → Wallpapers** for **Main**, **Ember Flow**, **Aurora**, **O
 
 Installed Windows clients check GitHub Releases at startup and download newer stable releases. Ember restarts to install when the game is closed and no download, profile operation, or editing dialog is active. **Settings → Update client** shows progress, retry, and **Install and restart**. A failed check leaves your workspace usable.
 
+**0.5.3 update safeguards:** cached installers for the same or an older version are ignored. If an automatic update handoff appears not to have completed, Ember pauses repeated automatic restarts for that update; **Install and restart** remains available. Before an automatic restart, a dialog explains what is happening. If installation is blocked or fails to start, the normal controls return.
+
 Portable builds use the release page for manual replacement.
 
 **Upgrading from 0.4.x:** install a current release once using the installer. Older builds can't start the new updater automatically. Your existing profiles, mods, wallpaper preferences, and caches are preserved.
+
+</details>
+
+<details>
+<summary><strong>Closing Ember and local diagnostics</strong></summary>
+
+Closing Ember briefly waits for a bounded attempt to remove its online session. A failed or stalled request cannot hold the app open indefinitely. Reopening during this cleanup queues a fresh launch after it finishes. If a connection ends abruptly, its active count still expires after 90 seconds without a heartbeat. The presence service retains closed-session records for up to 120 seconds to reject delayed requests; these records are not counted as online.
+
+Ember keeps a size-limited local diagnostic log in its app-data `logs/app.log` file for startup, shutdown, updater, and process-failure information. The log is trimmed as it grows and is not uploaded. See [Privacy](PRIVACY.md) for the local session lease and other stored data.
 
 </details>
 

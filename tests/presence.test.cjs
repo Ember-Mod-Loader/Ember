@@ -1,14 +1,27 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { EventEmitter } = require('node:events');
+const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
+const path = require('node:path');
 const { setImmediate: tick } = require('node:timers/promises');
 const { createPresenceServer } = require('../backend/presence/server.cjs');
+const { acquirePresenceLease, LEASE_TTL_MS } = require('../electron/presence-lease.cjs');
+const { temporaryDirectory } = require('./temp-directory.cjs');
 const {
   createPresence, HEARTBEAT_MS, REQUEST_TIMEOUT_MS, MAX_BACKOFF_MS,
   STALE_TTL_MS, LEAVE_TIMEOUT_MS, MAX_RESPONSE_BYTES,
 } = require('../electron/presence.cjs');
 
 async function settle() { await tick(); await tick(); }
+
+async function bounded(promise) {
+  let deadline;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('Presence test operation timed out.')), 1500);
+    })]);
+  } finally { clearTimeout(deadline); }
+}
 
 function clock() {
   let current = Date.parse('2026-11-06T12:00:00.000Z');
@@ -100,8 +113,10 @@ test('heartbeats publish real counts, reuse one ephemeral session, and expose de
   assert.equal(requests[0].options.redirect, 'error');
   assert.equal(requests[0].options.credentials, 'omit');
   assert.equal(requests[0].options.cache, 'no-store');
-  assert.deepEqual(Object.keys(requests[0].body), ['sessionId']);
+  assert.deepEqual(Object.keys(requests[0].body), ['sessionId', 'connectionId', 'generation']);
   assert.match(requests[0].body.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.match(requests[0].body.connectionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(requests[0].body.generation, 1);
   await time.advance(HEARTBEAT_MS);
   assert.equal(presence.getStatus().count, 4);
   assert.equal(requests.length, 2);
@@ -307,8 +322,10 @@ test('two real HTTP clients publish a shared online count and delete their anony
   assert.notEqual(ids[0], ids[1]);
   assert.equal(ids[2], ids[0]);
   for (const { body } of wireBodies) {
-    assert.deepEqual(Object.keys(body), ['sessionId']);
+    assert.deepEqual(Object.keys(body), ['sessionId', 'connectionId', 'generation']);
     assert.match(body.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.match(body.connectionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(body.generation, 1);
   }
   await second.dispose();
   snapshot = await (await fetch(`${endpoint}/v1/online`)).json();
@@ -323,4 +340,162 @@ test('two real HTTP clients publish a shared online count and delete their anony
   assert.deepEqual(wireBodies.filter(entry => entry.method === 'DELETE').map(entry => entry.body.sessionId), [ids[1], ids[0]]);
   assert(published.first.some(status => status.status === 'online' && status.count === 2));
   assert(published.second.some(status => status.status === 'online' && status.count === 2));
+});
+
+test('short leases are saved before use, reuse sessions across rapid opens, and prevent older owners renewing them', async t => {
+  const root = await temporaryDirectory(t);
+  const file = path.join(root, 'presence-lease.json');
+  const time = clock();
+  const first = await acquirePresenceLease(file, { now: time.options.now });
+  let saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(Object.keys(saved).sort(), ['connectionId', 'expiresAt', 'generation', 'sessionId', 'version']);
+  assert.equal(saved.expiresAt, time.options.now() + LEASE_TTL_MS);
+  assert.equal(saved.sessionId, first.identity.sessionId);
+  assert.equal(Object.isFrozen(first.identity), true);
+  time.jump(2000);
+  const second = await acquirePresenceLease(file, { now: time.options.now });
+  assert.equal(second.identity.sessionId, first.identity.sessionId);
+  assert.equal(second.identity.generation, 2);
+  assert.notEqual(second.identity.connectionId, first.identity.connectionId);
+  await assert.rejects(first.renew(), /newer connection/);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).connectionId, second.identity.connectionId);
+  const [third, fourth] = await Promise.all([
+    acquirePresenceLease(file, { now: time.options.now }),
+    acquirePresenceLease(file, { now: time.options.now }),
+  ]);
+  assert.deepEqual([third.identity.generation, fourth.identity.generation], [3, 4]);
+  assert.equal(fourth.identity.sessionId, first.identity.sessionId);
+  await assert.rejects(third.renew(), /newer connection/);
+  time.jump(30_000);
+  await fourth.renew();
+  saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.expiresAt, time.options.now() + LEASE_TTL_MS);
+  assert.equal(saved.generation, 4);
+  assert.deepEqual(await readdir(root), ['presence-lease.json']);
+});
+
+test('expired or malformed leases are replaced rather than becoming permanent identifiers', async t => {
+  const root = await temporaryDirectory(t);
+  const file = path.join(root, 'presence-lease.json');
+  const time = clock();
+  const first = await acquirePresenceLease(file, { now: time.options.now });
+  time.jump(LEASE_TTL_MS);
+  const expired = await acquirePresenceLease(file, { now: time.options.now });
+  assert.notEqual(expired.identity.sessionId, first.identity.sessionId);
+  assert.equal(expired.identity.generation, 1);
+  for (const invalid of ['{bad', JSON.stringify({ version: 1, sessionId: '../invalid' }), 'x'.repeat(2049)]) {
+    await writeFile(file, invalid);
+    const replacement = await acquirePresenceLease(file, { now: time.options.now });
+    assert.equal(replacement.identity.generation, 1);
+    assert.notEqual(replacement.identity.sessionId, expired.identity.sessionId);
+  }
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  saved.expiresAt = time.options.now() + LEASE_TTL_MS + 1000;
+  await writeFile(file, JSON.stringify(saved));
+  const future = await acquirePresenceLease(file, { now: time.options.now });
+  assert.notEqual(future.identity.sessionId, saved.sessionId);
+  assert.equal(future.identity.generation, 1);
+});
+
+test('lease storage failures reject locally and a failed renewal only disables presence', async t => {
+  const root = await temporaryDirectory(t);
+  const blocked = path.join(root, 'blocked.json');
+  await mkdir(blocked);
+  await assert.rejects(acquirePresenceLease(blocked), /presence session file/);
+  const time = clock();
+  const identity = (await acquirePresenceLease(path.join(root, 'lease.json'), { now: time.options.now })).identity;
+  let renewals = 0;
+  const presence = client(time, { lease: { identity, renew: async () => { renewals++; throw new Error('Disk unavailable'); } },
+    fetchImpl: (url, options) => options.method === 'DELETE' ? new Response(null, { status: 204 }) : response(1),
+  });
+  presence.start(); await settle();
+  assert.equal(renewals, 1);
+  assert.deepEqual(presence.getStatus(), { status: 'unavailable', count: null, updatedAt: null });
+  await presence.dispose();
+  assert.throws(() => createPresence({ lease: { identity: { ...identity, generation: 0 }, renew() {} } }), /Invalid temporary/);
+});
+
+test('provided leases send stable ownership metadata and renew only successful heartbeats', async t => {
+  const root = await temporaryDirectory(t);
+  const file = path.join(root, 'presence-lease.json');
+  const time = clock();
+  const lease = await acquirePresenceLease(file, { now: time.options.now });
+  const storedBeforeStart = await readFile(file, 'utf8');
+  let renewals = 0;
+  let calls = 0;
+  let resolveOnline;
+  const online = new Promise(resolve => { resolveOnline = resolve; });
+  const presence = client(time, { lease: { identity: lease.identity, renew: async () => { renewals++; await lease.renew(); } },
+    publish: status => { if (status.status === 'online') resolveOnline(); },
+    fetchImpl(url, options) {
+      assert.deepEqual(JSON.parse(options.body), lease.identity);
+      if (options.method === 'DELETE') return new Response(null, { status: 204 });
+      return ++calls === 1 ? new Response('unavailable', { status: 503 }) : response(1, time.time());
+    },
+  });
+  presence.start(); await settle();
+  assert.equal(renewals, 0);
+  assert.equal(await readFile(file, 'utf8'), storedBeforeStart);
+  await time.advance(HEARTBEAT_MS);
+  await bounded(online);
+  assert.equal(renewals, 1);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).expiresAt, time.options.now() + LEASE_TTL_MS);
+  await presence.dispose();
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).sessionId, lease.identity.sessionId);
+  const next = await acquirePresenceLease(file, { now: time.options.now });
+  assert.equal(next.identity.sessionId, lease.identity.sessionId);
+  assert.equal(next.identity.generation, lease.identity.generation + 1);
+});
+
+test('three rapid reopened clients count once and stale posts or deletes cannot remove or resurrect the latest session', async t => {
+  const root = await temporaryDirectory(t);
+  const file = path.join(root, 'presence-lease.json');
+  const server = createPresenceServer();
+  const clients = [];
+  t.after(async () => {
+    await Promise.all(clients.map(presence => presence.dispose()));
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  const identities = [];
+  for (let index = 0; index < 3; index++) {
+    const time = clock();
+    const lease = await acquirePresenceLease(file, { now: time.options.now });
+    identities.push(lease.identity);
+    let resolveOnline;
+    const ready = new Promise(resolve => { resolveOnline = resolve; });
+    const presence = createPresence({ endpoint, allowLocalhost: true, ...time.options, lease,
+      publish: status => { if (status.status === 'online') resolveOnline(status); },
+    });
+    clients.push(presence);
+    presence.start();
+    assert.equal((await bounded(ready)).count, 1);
+  }
+  assert.equal(new Set(identities.map(identity => identity.sessionId)).size, 1);
+  assert.equal(new Set(identities.map(identity => identity.connectionId)).size, 3);
+  assert.deepEqual(identities.map(identity => identity.generation), [1, 2, 3]);
+  const online = async () => (await (await fetch(`${endpoint}/v1/online`)).json()).online;
+  await clients[0].dispose(); await clients[1].dispose();
+  assert.equal(await online(), 1);
+  const sendOld = identity => fetch(`${endpoint}/v1/heartbeat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(identity) });
+  assert.equal((await sendOld(identities[0])).status, 409);
+  assert.equal(await online(), 1);
+  await clients[2].dispose();
+  assert.equal(await online(), 0);
+  assert.equal((await sendOld(identities[2])).status, 409);
+  assert.equal(await online(), 0);
+  const testTime = clock();
+  const finalLease = await acquirePresenceLease(file, { now: testTime.options.now });
+  assert.equal(finalLease.identity.sessionId, identities[0].sessionId);
+  assert.equal(finalLease.identity.generation, 4);
+  let resolveOnline;
+  const ready = new Promise(resolve => { resolveOnline = resolve; });
+  const reopened = createPresence({ endpoint, allowLocalhost: true, ...testTime.options, lease: finalLease,
+    publish: status => { if (status.status === 'online') resolveOnline(status); },
+  });
+  clients.push(reopened); reopened.start();
+  assert.equal((await bounded(ready)).count, 1);
+  await reopened.dispose();
+  assert.equal(await online(), 0);
 });

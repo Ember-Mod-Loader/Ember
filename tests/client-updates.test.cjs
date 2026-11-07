@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { setImmediate: tick } = require('node:timers/promises');
-const { createClientUpdates } = require('../electron/client-updates.cjs');
+const { createClientUpdates, isNewerVersion } = require('../electron/client-updates.cjs');
 
 function mockUpdater() {
   const updater = new EventEmitter();
@@ -237,4 +237,106 @@ test('failed pre-install reservation never starts the installer, and disposal dr
   assert.deepEqual(await client.installUpdate(), before);
   assert.equal(events.length, count);
   assert.equal(updater.listenerCount('update-downloaded'), 0);
+});
+
+test('SemVer comparison orders numeric components correctly and ignores build metadata', () => {
+  for (const [newer, older] of [['0.5.10', '0.5.9'], ['0.10.0', '0.9.99'], ['1.0.0', '1.0.0-rc.1'],
+    ['1.0.0-rc.10', '1.0.0-rc.9'], ['1.0.0-beta', '1.0.0-alpha'], ['1.0.0-alpha.1', '1.0.0-alpha'],
+    ['1.0.0-alpha.beta', '1.0.0-alpha.1']]) {
+    assert.equal(isNewerVersion(newer, older), true, `${newer} > ${older}`);
+    assert.equal(isNewerVersion(older, newer), false, `${older} is not > ${newer}`);
+  }
+  assert.equal(isNewerVersion('0.5.2+new', '0.5.2+old'), false);
+  for (const invalid of ['01.0.0', '1.0.0-01', '1.0.0-rc..1', '1.0.0+', 'not-a-version']) {
+    assert.equal(isNewerVersion(invalid, '0.0.0'), false);
+  }
+});
+
+test('same-version and older cached events can never launch an installer, automatically or manually', async () => {
+  for (const candidate of ['0.5.0', '0.4.99', '0.5.0+rebuilt']) {
+    const updater = mockUpdater();
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: candidate }); return {}; };
+    let reserved = 0;
+    let before = 0;
+    const client = createClientUpdates(options(updater, {
+      reserveAutomaticInstall: () => { reserved++; return true; }, beforeInstall: () => { before++; },
+    }));
+    await client.checkForUpdates({ automatic: true });
+    updater.emit('update-downloaded', { version: candidate });
+    await tick();
+    await client.retryAutomaticInstall();
+    await client.installUpdate();
+    assert.deepEqual(updater.installs, []);
+    assert.equal(reserved, 0);
+    assert.equal(before, 0);
+    assert.equal(client.getStatus().latestVersion, null);
+  }
+});
+
+test('an invalidated payload cannot install after an asynchronous game safety check', async () => {
+  const updater = mockUpdater();
+  let resolve;
+  let before = 0;
+  const client = createClientUpdates(options(updater, {
+    canInstall: () => new Promise(done => { resolve = done; }), beforeInstall: () => { before++; },
+  }));
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  const pending = client.installUpdate();
+  await tick();
+  updater.emit('update-downloaded', { version: '0.5.0' });
+  resolve(true);
+  await pending;
+  assert.deepEqual(updater.installs, []);
+  assert.equal(before, 0);
+});
+
+test('automatic reservation failures stop background retries while explicit manual installation remains available', async () => {
+  for (const reserve of [() => false, () => { throw new Error('Disk unavailable'); }]) {
+    const updater = mockUpdater();
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+    let reservations = 0;
+    const contexts = [];
+    const client = createClientUpdates(options(updater, {
+      reserveAutomaticInstall: context => { reservations++; assert.deepEqual(context, { fromVersion: '0.5.0', toVersion: '0.5.1' }); return reserve(); },
+      beforeInstall: context => { contexts.push(context); },
+    }));
+    await client.checkForUpdates({ automatic: true });
+    updater.emit('update-downloaded', { version: '0.5.1' });
+    await tick();
+    assert.equal(client.getStatus().status, 'downloaded');
+    assert.equal(client.getStatus().installBlocked, true);
+    assert.match(client.getStatus().message, /previous update restart/);
+    await client.retryAutomaticInstall();
+    assert.equal(reservations, 1);
+    assert.deepEqual(updater.installs, []);
+    await client.installUpdate();
+    assert.deepEqual(updater.installs, [[false, true]]);
+    assert.equal(reservations, 1);
+    assert.deepEqual(contexts, [{ automatic: false, fromVersion: '0.5.0', toVersion: '0.5.1' }]);
+  }
+});
+
+test('automatic attempts are reserved only after safety and rolled back if the native work lock becomes busy', async () => {
+  const updater = mockUpdater();
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  let safe = false;
+  let race = true;
+  const calls = [];
+  const client = createClientUpdates(options(updater, {
+    canInstall: () => { calls.push('safe'); return safe; },
+    reserveAutomaticInstall: () => { calls.push('reserve'); return true; },
+    releaseAutomaticInstall: () => { calls.push('release'); },
+    beforeInstall: context => { calls.push('before'); assert.equal(context.automatic, true); if (race) throw new Error('Work began'); },
+  }));
+  await client.checkForUpdates({ automatic: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.deepEqual(calls, ['safe']);
+  safe = true;
+  await client.retryAutomaticInstall();
+  assert.deepEqual(calls, ['safe', 'safe', 'reserve', 'before', 'release']);
+  race = false;
+  await client.retryAutomaticInstall();
+  assert.deepEqual(updater.installs, [[true, true]]);
+  assert.deepEqual(calls.slice(-3), ['safe', 'reserve', 'before']);
 });

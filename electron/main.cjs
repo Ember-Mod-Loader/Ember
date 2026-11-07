@@ -10,7 +10,11 @@ const { registerGameActions } = require('./game-actions.cjs');
 const { createDownloadHistory } = require('./download-history.cjs');
 const { createSharingClient } = require('./sharing.cjs');
 const { createClientUpdates } = require('./client-updates.cjs');
+const { createUpdateAttempts } = require('./update-attempts.cjs');
 const { createPresence } = require('./presence.cjs');
+const { acquirePresenceLease } = require('./presence-lease.cjs');
+const { createQuitCoordinator } = require('./quit-coordinator.cjs');
+const { createDiagnostics, errorDetails } = require('./diagnostics.cjs');
 const { emberPresence } = require('../package.json');
 const { assertSupportedGamesClosed } = require('./steam.cjs');
 
@@ -20,6 +24,10 @@ const appUrl = `${appScheme}://${appHost}/`;
 const dist = path.join(__dirname, '..', 'dist');
 let window;
 let installingClient = false;
+let updateHandoffReady = false;
+let quittingClient = false;
+let quitCoordinator;
+let diagnostics;
 let rendererBusy = true;
 let gameWorkBusy = () => false;
 const RELEASES_URL = 'https://github.com/Ember-Mod-Loader/Ember/releases/latest';
@@ -111,6 +119,9 @@ function handle(channel, action) {
     if (installingClient && !['client-update-status', 'window-state', 'window-command'].includes(channel)) {
       throw new Error('Ember is restarting to install a client update.');
     }
+    if (quittingClient && !['client-update-status', 'presence-status', 'window-state', 'window-command'].includes(channel)) {
+      throw new Error('Ember is closing. Open it again to continue.');
+    }
     return action(...args);
   });
 }
@@ -181,7 +192,14 @@ function createWindow() {
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   if (app.isPackaged) window.webContents.on('devtools-opened', () => window.webContents.closeDevTools());
   window.once('ready-to-show', () => window.show());
-  window.on('closed', () => { window = null; });
+  window.on('close', event => quitCoordinator?.requestWindowClose(event));
+  window.on('closed', () => {
+    diagnostics?.log('window-closed', { updating: installingClient, coordinated: quitCoordinator?.canClose() === true });
+    window = null;
+  });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    diagnostics?.log('renderer-exited', { reason: details.reason, exitCode: details.exitCode });
+  });
   window.loadURL(appUrl).catch(error => {
     console.error('Unable to load Ember', error);
     app.exit(1);
@@ -194,10 +212,16 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.setAppUserModelId('com.modrelay.desktop');
   app.on('second-instance', () => {
+    if (quitCoordinator?.requestRelaunch()) return;
     if (window?.isMinimized()) window.restore();
     window?.focus();
   });
   app.whenReady().then(async () => {
+    diagnostics = createDiagnostics(app.getPath('userData'), app.getVersion());
+    diagnostics.log('started', { pid: process.pid, afterUpdate: app.commandLine.hasSwitch('updated') });
+    process.on('uncaughtExceptionMonitor', error => diagnostics.log('uncaught-exception', { error: errorDetails(error) }));
+    app.on('child-process-gone', (_event, details) => diagnostics.log('child-exited', { type: details.type, reason: details.reason, exitCode: details.exitCode }));
+    app.on('quit', (_event, exitCode) => diagnostics.log('quit', { exitCode, updating: installingClient }));
     if (!nativeTheme.shouldUseHighContrastColors) nativeTheme.themeSource = 'dark';
     protocol.handle(appScheme, serveApp);
     const cache = createPackageCache(path.join(app.getPath('userData'), 'package-cache'));
@@ -208,25 +232,43 @@ if (!app.requestSingleInstanceLock()) {
       directory: app.getPath('userData'), cache, history, handle, dialog, shell, getWindow: () => window,
     });
     gameWorkBusy = gameActions.isBusy;
+    let presenceLease = null;
+    try {
+      presenceLease = await acquirePresenceLease(path.join(app.getPath('userData'), 'presence-session.json'));
+    } catch {
+      diagnostics.log('presence-storage-unavailable');
+      console.error('The temporary online session is unavailable; Ember will continue without the online count.');
+    }
     const presence = createPresence({
-      endpoint: emberPresence?.endpoint ?? null,
+      endpoint: presenceLease ? emberPresence?.endpoint ?? null : null,
+      lease: presenceLease,
       publish: status => {
         if (window && !window.webContents.isDestroyed()) window.webContents.send('modrelay:presence-state', status);
       },
     });
     handle('presence-status', () => presence.getStatus());
-    app.once('before-quit', () => { void presence.dispose(); });
+    quitCoordinator = createQuitCoordinator({
+      app, dispose: () => presence.dispose(),
+      onPending: () => { quittingClient = true; diagnostics.log('quit-requested', { updating: installingClient }); },
+      isUpdating: () => installingClient,
+      shouldDeferQuit: () => installingClient && !updateHandoffReady,
+      onError: error => { diagnostics.log('presence-cleanup-incomplete', { error: errorDetails(error) }); },
+    });
     handle('window-state', () => ({ maximized: window.isMaximized() }));
     const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE);
     const installed = app.isPackaged && process.platform === 'win32' && !portable &&
       existsSync(path.join(path.dirname(app.getPath('exe')), 'Uninstall Ember.exe'));
     const hasActiveWork = () => installingClient || rendererBusy || gameWorkBusy() ||
       history.list().some(record => ['resolving', 'downloading', 'saving'].includes(record.status));
+    const updateAttempts = createUpdateAttempts(path.join(app.getPath('userData'), 'client-update-attempt.json'), { version: app.getVersion() });
     const clientUpdates = createClientUpdates({
       updater: installed ? require('electron-updater').autoUpdater : undefined,
       version: app.getVersion(), enabled: installed, portable,
       publish: status => {
-        if (status.status === 'error' || (status.status === 'downloaded' && status.installBlocked)) installingClient = false;
+        if (status.status !== 'installing') {
+          installingClient = false;
+          updateHandoffReady = false;
+        }
         if (window && !window.webContents.isDestroyed()) window.webContents.send('modrelay:client-update-state', status);
       },
       canInstall: async () => {
@@ -234,9 +276,21 @@ if (!app.requestSingleInstanceLock()) {
         await assertSupportedGamesClosed();
         return !hasActiveWork();
       },
-      beforeInstall: () => {
+      reserveAutomaticInstall: updateAttempts.reserveAutomaticInstall,
+      releaseAutomaticInstall: updateAttempts.releaseAutomaticInstall,
+      beforeInstall: async ({ automatic, fromVersion, toVersion }) => {
         if (hasActiveWork()) throw new Error('Finish active work before installing the update.');
         installingClient = true;
+        diagnostics.log('update-restart-requested', { automatic, fromVersion, toVersion });
+        if (window && !window.webContents.isDestroyed()) {
+          window.webContents.send('modrelay:client-update-state', {
+            ...clientUpdates.getStatus(), status: 'installing',
+            message: `Installing Ember ${toVersion}. Ember will restart automatically.`,
+          });
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (!installingClient || quittingClient) throw new Error('The update restart was cancelled.');
+        updateHandoffReady = true;
       },
     });
     handle('client-update', () => clientUpdates.checkForUpdates());
@@ -253,7 +307,7 @@ if (!app.requestSingleInstanceLock()) {
     handle('window-command', command => {
       if (command === 'minimize') window.minimize();
       else if (command === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize();
-      else if (command === 'close') window.close();
+      else if (command === 'close') app.quit();
       else throw new Error('Unknown window command.');
     });
     handle('save-profile', saveProfile);
@@ -303,6 +357,7 @@ if (!app.requestSingleInstanceLock()) {
       if (installed) void clientUpdates.checkForUpdates({ automatic: true });
     });
   }).catch(error => {
+    diagnostics?.log('startup-failed', { error: errorDetails(error) });
     dialog.showErrorBox('Ember could not start', error.message);
     app.quit();
   });

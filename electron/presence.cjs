@@ -6,6 +6,7 @@ const MAX_BACKOFF_MS = 60_000;
 const STALE_TTL_MS = 90_000;
 const LEAVE_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 4096;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function presenceOrigin(value, allowLocalhost) {
   if (value === undefined || value === null || value === '') return null;
@@ -67,15 +68,22 @@ async function readPresence(response) {
 
 function createPresence({
   endpoint = null, fetchImpl = globalThis.fetch, publish = () => {}, now = Date.now,
-  setTimer = setTimeout, clearTimer = clearTimeout, allowLocalhost = false,
+  setTimer = setTimeout, clearTimer = clearTimeout, allowLocalhost = false, lease = null,
 } = {}) {
   if (typeof allowLocalhost !== 'boolean' || typeof fetchImpl !== 'function' || typeof publish !== 'function' ||
       typeof now !== 'function' || typeof setTimer !== 'function' || typeof clearTimer !== 'function') {
     throw new Error('Invalid presence client options.');
   }
   const origin = presenceOrigin(endpoint, allowLocalhost);
-  // This is a new anonymous session for this client process; it is never written to disk.
-  const sessionId = randomUUID();
+  const supplied = lease?.identity;
+  if (lease && (!supplied || !UUID.test(supplied.sessionId) || !UUID.test(supplied.connectionId) ||
+      !Number.isSafeInteger(supplied.generation) || supplied.generation < 1 || typeof lease.renew !== 'function')) {
+    throw new Error('Invalid temporary presence session lease.');
+  }
+  // A saved lease is reused only across brief restarts, with new connection ownership each time.
+  const identity = Object.freeze(lease ? {
+    sessionId: supplied.sessionId, connectionId: supplied.connectionId, generation: supplied.generation,
+  } : { sessionId: randomUUID(), connectionId: randomUUID(), generation: 1 });
   let started = false;
   let disposed = false;
   let inFlight = null;
@@ -122,7 +130,7 @@ function createPresence({
     try {
       network = Promise.resolve(fetchImpl(`${origin}${pathname}`, {
         method, headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sessionId }), signal: controller.signal, redirect: 'error',
+        body: JSON.stringify(identity), signal: controller.signal, redirect: 'error',
         cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
       })).then(async response => {
         if (readResponse) return readPresence(response);
@@ -151,6 +159,8 @@ function createPresence({
     inFlight = active;
     try {
       const next = await active.promise;
+      if (disposed || inFlight !== active) return;
+      if (lease) await lease.renew();
       if (disposed || inFlight !== active) return;
       failures = 0;
       freshAt = now();

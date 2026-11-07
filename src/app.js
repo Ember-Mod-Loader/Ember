@@ -550,8 +550,8 @@ function openDialog(type, id) {
   (dialog.querySelector('[data-initial-focus]') ?? dialog.querySelector('[data-action="close-dialog"]'))?.focus();
 }
 
-function dialogHeader(title, description = '') {
-  return `<header class="dialog-header"><div><h2 id="dialog-title">${esc(title)}</h2>${description ? `<p>${esc(description)}</p>` : ''}</div>${iconButton('Close dialog', 'close', 'close-dialog')}</header>`;
+function dialogHeader(title, description = '', closable = true) {
+  return `<header class="dialog-header"><div><h2 id="dialog-title">${esc(title)}</h2>${description ? `<p>${esc(description)}</p>` : ''}</div>${closable ? iconButton('Close dialog', 'close', 'close-dialog') : ''}</header>`;
 }
 
 function renderDialog() {
@@ -565,12 +565,14 @@ function renderDialog() {
   switch (type) {
     case 'client-update': {
       const status = ui.clientUpdate;
-      dialog.innerHTML = `${dialogHeader('Client updates', `Ember ${status?.version || CLIENT_VERSION}`)}
+      const installing = status?.status === 'installing';
+      dialog.innerHTML = `${dialogHeader('Client updates', `Ember ${status?.version || CLIENT_VERSION}`, !installing)}
         <div class="dialog-form"><p class="launch-message">${esc(status?.message || 'Online client updates are not available yet.')}</p>
+          ${installing ? '<p class="client-update-note">Ember will restart automatically to finish updating.</p>' : ''}
           ${status?.progress ? `<progress class="download-progress" max="100" value="${status.progress.percent}" aria-label="Client update download"></progress><p class="client-update-note">${Math.round(status.progress.percent)}% downloaded</p>` : ''}
           <p class="client-update-note">Installed Windows clients check GitHub Releases at startup. Updates install automatically when no downloads, profile work, or game session is active. Portable builds are updated manually.</p>
         </div>
-        <div class="dialog-footer">${button('View releases', 'diagonal', 'client-release-page')}${status?.status === 'downloaded' ? button('Install and restart', 'refresh', 'client-install', { style: 'primary' }) : status?.status === 'error' ? button('Try again', 'refresh', 'client-update', { style: 'primary' }) : button('Done', 'check', 'close-dialog', { style: 'primary' })}</div>`;
+        <div class="dialog-footer">${installing ? '<p role="status">Restarting Ember…</p>' : button('View releases', 'diagonal', 'client-release-page') + (status?.status === 'downloaded' ? button('Install and restart', 'refresh', 'client-install', { style: 'primary' }) : status?.status === 'error' ? button('Try again', 'refresh', 'client-update', { style: 'primary' }) : button('Done', 'check', 'close-dialog', { style: 'primary' }))}</div>`;
       break;
     }
     case 'wallpapers':
@@ -719,6 +721,7 @@ function renderDialog() {
 }
 
 function closeDialog() {
+  if (ui.dialog?.type === 'client-update' && ui.clientUpdate?.status === 'installing') return;
   ui.dialog = null;
   reportClientBusy();
   ui.detail = null;
@@ -1049,7 +1052,8 @@ function updateClientState(status) {
   ui.clientUpdate = status;
   const message = app.querySelector('#client-update-message');
   if (message) message.textContent = status.message;
-  if (ui.dialog?.type === 'client-update') renderDialog();
+  if (status.status === 'installing' && !ui.dialog) openDialog('client-update', {});
+  else if (ui.dialog?.type === 'client-update') renderDialog();
 }
 
 async function checkClientUpdate() {
@@ -1391,7 +1395,15 @@ document.addEventListener('submit', async event => {
   }
 });
 
-dialog.addEventListener('cancel', () => { ui.dialog = null; ui.detail = null; reportClientBusy(); });
+dialog.addEventListener('cancel', event => {
+  if (ui.dialog?.type === 'client-update' && ui.clientUpdate?.status === 'installing') {
+    event.preventDefault();
+    return;
+  }
+  ui.dialog = null;
+  ui.detail = null;
+  reportClientBusy();
+});
 
 document.addEventListener('keydown', event => {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' || dialog.open) return;

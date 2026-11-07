@@ -1,10 +1,16 @@
 # Privacy
 
-Applies to Ember 0.5.2.
+Applies to Ember 0.5.3.
 
 ## On your device
 
 Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account system, behavioral tracking, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company, R.E.P.O., and PEAK.
+
+Ember stores a temporary random presence-session lease in local app data. It is valid for 120 seconds after its last renewal, allowing quick restarts to reuse a session rather than briefly count twice. Each app process receives new connection ownership. Expired leases are ignored and replaced with a new random session; this is not a stable device identifier.
+
+Ember also stores a small update-attempt record containing update versions and timing, used to pause repeated automatic restarts when an earlier update handoff may not have completed.
+
+The size-limited local `logs/app.log` file records the app version, startup and shutdown events, updater activity, process exits, and error details. Error details may include local paths. Old log content is trimmed as the file grows. These diagnostics are not uploaded automatically or sent to the presence service.
 
 Completed download-history entries clear automatically after 30 seconds, or when you choose Clear completed. This clears the history entries only; profiles, installed mods, and cached download files stay on your device.
 
@@ -12,7 +18,9 @@ A profile code or JSON export can contain the profile name, game, and package li
 
 ## Network requests
 
-The **online now** indicator contacts Ember's [presence service](https://ember-presence.onrender.com/v1/online), hosted on Render. While the app is open, it sends a new random session ID generated for that app process, refreshing it about every 30 seconds. The ID is never saved to disk. No name, persistent device identifier, game, profile, or mod list is sent. The service keeps session IDs and expiration times in memory, removes sessions after 90 seconds without a heartbeat, and returns only an aggregate count. Closing the app attempts to remove its session immediately. Counts represent active app sessions rather than verified unique people; multiple devices can count separately. If the service is unavailable, Ember shows an unavailable state instead of an invented count.
+The **online now** indicator contacts Ember's [presence service](https://ember-presence.onrender.com/v1/online), hosted on Render. While the app is open, it sends its temporary random session ID and connection-ownership information, refreshing them about every 30 seconds. The session may be reused across brief restarts through the 120-second local lease described above. No name, stable device identifier, game, profile, or mod list is sent. The service keeps active session and expiration information in memory, expires active sessions after 90 seconds without a heartbeat, and returns only an aggregate count. It retains closed-session retirement records for up to 120 seconds to reject delayed heartbeats; these records are not counted as online.
+
+Closing the app waits briefly for a bounded attempt to remove its session. A failed request does not prevent the app from quitting; the active-session expiration still applies. Counts represent active app sessions rather than verified unique people; multiple devices can count separately. If the service is unavailable, Ember shows an unavailable state instead of an invented count.
 
 Render receives ordinary connection information, including IP addresses, and may retain its own operational logs. Ember's presence service does not record request logs or store IP addresses. See [Render's privacy policy](https://render.com/privacy).
 

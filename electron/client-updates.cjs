@@ -1,7 +1,40 @@
 // electron-updater owns GitHub feed retrieval and SHA-512 verification.
 // Authenticode verification also applies when a signed publisher is configured.
 // Feed configuration is bundled by electron-builder; renderer callers cannot choose a feed.
-const VERSION = /^\d{1,10}\.\d{1,10}\.\d{1,10}(?:-[0-9a-z.-]{1,80})?(?:\+[0-9a-z.-]{1,80})?$/i;
+const VERSION = /^(0|[1-9]\d{0,9})\.(0|[1-9]\d{0,9})\.(0|[1-9]\d{0,9})(?:-([0-9a-z-]+(?:\.[0-9a-z-]+)*))?(?:\+([0-9a-z-]+(?:\.[0-9a-z-]+)*))?$/i;
+
+function parseVersion(value) {
+  if (typeof value !== 'string' || value.length > 200) return null;
+  const match = VERSION.exec(value);
+  if (!match) return null;
+  const prerelease = match[4]?.split('.') ?? [];
+  if (prerelease.some(part => /^\d+$/.test(part) && part.length > 1 && part[0] === '0')) return null;
+  return { core: match.slice(1, 4).map(Number), prerelease };
+}
+
+function isNewerVersion(candidate, current) {
+  const next = parseVersion(candidate);
+  const installed = parseVersion(current);
+  if (!next || !installed) return false;
+  for (let index = 0; index < 3; index++) {
+    if (next.core[index] !== installed.core[index]) return next.core[index] > installed.core[index];
+  }
+  if (!next.prerelease.length || !installed.prerelease.length) {
+    return !next.prerelease.length && installed.prerelease.length > 0;
+  }
+  for (let index = 0; index < Math.max(next.prerelease.length, installed.prerelease.length); index++) {
+    const left = next.prerelease[index];
+    const right = installed.prerelease[index];
+    if (left === right) continue;
+    if (left === undefined || right === undefined) return right === undefined;
+    const leftNumeric = /^\d+$/.test(left);
+    const rightNumeric = /^\d+$/.test(right);
+    if (leftNumeric !== rightNumeric) return !leftNumeric;
+    if (leftNumeric && left.length !== right.length) return left.length > right.length;
+    return left > right;
+  }
+  return false; // Build metadata does not affect SemVer precedence.
+}
 
 function updateError(error) {
   const message = String(error?.message ?? error ?? '');
@@ -19,7 +52,7 @@ function updateError(error) {
 }
 
 function safeVersion(info) {
-  return typeof info?.version === 'string' && VERSION.test(info.version) ? info.version : null;
+  return parseVersion(info?.version) ? info.version : null;
 }
 
 function bytes(value) {
@@ -29,8 +62,9 @@ function bytes(value) {
 function createClientUpdates({
   updater, version, enabled = true, portable = false, publish = () => {},
   canInstall = () => true, beforeInstall = () => {},
+  reserveAutomaticInstall = () => true, releaseAutomaticInstall = () => {},
 } = {}) {
-  if (typeof version !== 'string' || !VERSION.test(version)) throw new Error('A valid installed client version is required.');
+  if (!parseVersion(version)) throw new Error('A valid installed client version is required.');
   const supported = enabled && !portable;
   if (supported && (!updater?.on || !updater?.removeListener || !updater?.checkForUpdates || !updater?.quitAndInstall)) {
     throw new Error('The installed client updater is unavailable.');
@@ -67,6 +101,19 @@ function createClientUpdates({
     listeners.push([event, guarded]);
   }
 
+  function acceptedVersion(info) {
+    const latestVersion = safeVersion(info);
+    if (!latestVersion) { fail(new Error('Invalid update version')); return null; }
+    if (!isNewerVersion(latestVersion, version)) {
+      automaticInstallRequested = false;
+      downloadReady = false;
+      change({ status: 'idle', latestVersion: null, progress: null, installBlocked: false,
+        message: 'This cached update is not newer than your installed Ember version. Check for updates again.' });
+      return null;
+    }
+    return latestVersion;
+  }
+
   if (supported) {
     updater.autoDownload = true;
     // Installing on normal quit could interrupt downloads/game work. Only our guarded path installs.
@@ -75,8 +122,8 @@ function createClientUpdates({
     updater.allowDowngrade = false;
     listen('checking-for-update', () => change({ status: 'checking', message: 'Checking for a newer Ember version…', progress: null, installBlocked: false }));
     listen('update-available', info => {
-      const latestVersion = safeVersion(info);
-      if (!latestVersion) { fail(new Error('Invalid update version')); return; }
+      const latestVersion = acceptedVersion(info);
+      if (!latestVersion) return;
       change({ status: 'available', latestVersion, message: `Ember ${latestVersion} is available. Preparing the download…`, installBlocked: false });
     });
     listen('update-not-available', () => {
@@ -90,8 +137,8 @@ function createClientUpdates({
       } });
     });
     listen('update-downloaded', info => {
-      const latestVersion = safeVersion(info);
-      if (!latestVersion) { fail(new Error('Invalid update version')); return; }
+      const latestVersion = acceptedVersion(info);
+      if (!latestVersion) return;
       downloadReady = true;
       change({ status: 'downloaded', latestVersion, progress: null, installBlocked: false,
         message: `Ember ${latestVersion} is ready to install. Restart Ember to finish updating.` });
@@ -125,21 +172,44 @@ function createClientUpdates({
   function installUpdate({ automatic = false } = {}) {
     if (disposed || !supported || state.status === 'installing') return Promise.resolve(getStatus());
     if (installing) return installing;
-    if (!downloadReady) return Promise.resolve(getStatus());
+    if (!downloadReady || !isNewerVersion(state.latestVersion, version)) return Promise.resolve(getStatus());
+    const context = { automatic, fromVersion: version, toVersion: state.latestVersion };
+    let reserved = false;
+    let handoffStarted = false;
+    const stillReady = () => downloadReady && state.latestVersion === context.toVersion && isNewerVersion(context.toVersion, version);
+    const releaseReservation = async () => {
+      if (reserved && !handoffStarted) {
+        reserved = false;
+        try { await releaseAutomaticInstall({ fromVersion: context.fromVersion, toVersion: context.toVersion }); } catch {}
+      }
+    };
     const work = Promise.resolve().then(async () => {
       let safe = false;
       try { safe = await canInstall(); } catch {}
-      if (disposed) return getStatus();
+      if (disposed || !stillReady()) return getStatus();
       if (safe !== true) {
         return change({ status: 'downloaded', installBlocked: true,
           message: 'The update is ready. Finish active downloads or profile work and close the game, then choose Install and restart.' });
       }
-      await beforeInstall();
-      if (disposed) return getStatus();
+      if (automatic) {
+        let allowed = false;
+        try { allowed = await reserveAutomaticInstall({ fromVersion: context.fromVersion, toVersion: context.toVersion }); } catch {}
+        if (allowed !== true) {
+          automaticInstallRequested = false;
+          return change({ status: 'downloaded', installBlocked: true,
+            message: 'Automatic restart was paused because a previous update restart may not have completed or its status could not be saved. Choose Install and restart to try again.' });
+        }
+        reserved = true;
+      }
+      if (disposed || !stillReady()) { await releaseReservation(); return getStatus(); }
+      await beforeInstall(context);
+      if (disposed || !stillReady()) { await releaseReservation(); return getStatus(); }
       change({ status: 'installing', installBlocked: false, message: 'Restarting Ember to install the update…' });
+      handoffStarted = true;
       updater.quitAndInstall(automatic, true);
       return getStatus();
-    }).catch(() => {
+    }).catch(async () => {
+      await releaseReservation();
       if (disposed) return getStatus();
       if (state.status === 'installing') automaticInstallRequested = false;
       return change({ status: 'downloaded', installBlocked: true,
@@ -164,4 +234,4 @@ function createClientUpdates({
   return { getStatus, checkForUpdates, installUpdate, retryAutomaticInstall, dispose };
 }
 
-module.exports = { createClientUpdates };
+module.exports = { createClientUpdates, isNewerVersion, isValidVersion: value => Boolean(parseVersion(value)) };
