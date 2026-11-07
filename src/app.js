@@ -40,6 +40,8 @@ let presenceEventsSeen = 0;
 let requestNumber = 0;
 let gameStatusRequestNumber = 0;
 let searchTimer;
+let searchComposing = false;
+let renderAfterComposition = false;
 let prefetchTimer;
 const removedDownloadIds = new Set();
 const catalogObserver = new IntersectionObserver(entries => {
@@ -121,6 +123,10 @@ function nav(page, count) {
 }
 
 function render() {
+  if (searchComposing && document.activeElement?.id === 'search-input') {
+    renderAfterComposition = true;
+    return;
+  }
   reportClientBusy();
   document.documentElement.dataset.wallpaper = manager.state.settings.wallpaper;
   const { game, profile, installed, updates } = manager;
@@ -128,6 +134,8 @@ function render() {
   const mode = manager.state.settings.launchMode;
   const focused = app.contains(document.activeElement) ? document.activeElement : null;
   const selector = focusSelector(focused);
+  const searchSelection = focused?.id === 'search-input'
+    ? { value: focused.value, start: focused.selectionStart, end: focused.selectionEnd, direction: focused.selectionDirection } : null;
   app.innerHTML = `
     <a class="skip" href="#main">Skip to content</a>
     ${ui.menu ? '<button class="nav-overlay" data-action="menu" aria-label="Close navigation"></button>' : ''}
@@ -178,7 +186,13 @@ function render() {
       </header>
       <main id="main" class="content${manager.state.settings.compactMode ? ' compact' : ''}" tabindex="-1">${renderPage()}</main>
     </div>`;
-  if (selector) app.querySelector(selector)?.focus({ preventScroll: true });
+  if (selector) {
+    const replacement = app.querySelector(selector);
+    replacement?.focus({ preventScroll: true });
+    if (searchSelection && replacement?.value === searchSelection.value && Number.isInteger(searchSelection.start)) {
+      replacement.setSelectionRange(searchSelection.start, searchSelection.end, searchSelection.direction ?? 'none');
+    }
+  }
   observeCatalog();
 }
 
@@ -221,8 +235,12 @@ function browsePage() {
 }
 
 function categoryControls() {
+  return `<label class="category-control"><span class="sr-only">Category</span><select id="category-select" aria-label="Category">${categoryOptions()}</select></label>`;
+}
+
+function categoryOptions() {
   const choices = ui.feed.categories;
-  return `<label class="category-control"><span class="sr-only">Category</span><select id="category-select" aria-label="Category"><option value="">All categories</option>${choices.map(({ id, name }) => `<option value="${esc(id)}"${ui.category === id ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></label>`;
+  return `<option value="">All categories</option>${choices.map(({ id, name }) => `<option value="${esc(id)}"${ui.category === id ? ' selected' : ''}>${esc(name)}</option>`).join('')}`;
 }
 
 function sortControls() {
@@ -271,6 +289,32 @@ function observeCatalog() {
 function refreshCatalogTail() {
   const tail = app.querySelector('#catalog-tail');
   if (tail) tail.innerHTML = catalogTail();
+  observeCatalog();
+}
+
+function refreshCatalogResults() {
+  if (ui.page !== 'browse') return;
+  const results = app.querySelector('#results');
+  const search = app.querySelector('#search-input');
+  const category = app.querySelector('#category-select');
+  const sort = app.querySelector('#catalog-sort');
+  const deprecated = app.querySelector('#show-deprecated');
+  // Intentional filter resets still need fresh controls. Ordinary search responses
+  // update results in place, retaining the input node, caret, and active IME.
+  if (!results || search?.value !== ui.query || category?.value !== ui.category || sort?.value !== ui.sort ||
+      deprecated?.checked !== ui.showDeprecated || Boolean(app.querySelector('[data-action="clear-sort"]')) !== Boolean(ui.sort)) {
+    render();
+    return;
+  }
+  const categoryKey = JSON.stringify(ui.feed.categories);
+  if (category.dataset.optionsKey !== categoryKey) {
+    category.innerHTML = categoryOptions();
+    category.value = ui.category;
+    category.dataset.optionsKey = categoryKey;
+  }
+  results.innerHTML = catalogResults();
+  const total = app.querySelector('.catalog-title .total-badge');
+  if (total) total.textContent = `${ui.feed.count.toLocaleString()} mods`;
   observeCatalog();
 }
 
@@ -684,12 +728,21 @@ function renderDialog() {
       break;
     }
     case 'import':
-      dialog.innerHTML = `${dialogHeader('Import profile', 'Paste an Ember share code or choose a profile file.')}
+      dialog.innerHTML = `${dialogHeader('Import profile', 'Import an Ember profile or a Thunderstore profile code.')}
         <form id="dialog-form" class="dialog-form">
-          <label>Share code or JSON<textarea class="field code-field" name="profileCode" rows="3" placeholder="Paste a share code or an exported profile…" data-initial-focus></textarea></label>
-          <label class="import-file">Or choose a JSON file<input class="field" type="file" name="profileFile" accept=".json,application/json"></label>
+          <label>Import from<select class="field" id="import-source" name="importSource"><option value="ember">Ember</option><option value="thunderstore">Thunderstore / r2modman</option></select></label>
+          <div data-import-section="ember">
+            <label>Share code or JSON<textarea class="field code-field" name="profileCode" rows="3" placeholder="Paste a share code or an exported profile…" data-initial-focus></textarea></label>
+            <label class="import-file">Or choose a JSON file<input class="field" type="file" name="profileFile" accept=".json,application/json"></label>
+          </div>
+          <div data-import-section="thunderstore" hidden>
+            <label>Profile code<input class="field code-field" type="text" name="thunderstoreCode" placeholder="Paste your Thunderstore profile code" maxlength="100" spellcheck="false" autocomplete="off"></label>
+            <label>Game<select class="field" name="importGame">${availableGames.map(game => `<option value="${esc(game.id)}"${game.id === manager.game.id ? ' selected' : ''}>${esc(game.name)}</option>`).join('')}</select></label>
+            <p class="import-note">Choose the game this profile was made for.</p>
+          </div>
+          <div class="import-review" role="status" hidden></div>
           <p class="form-error" role="alert" hidden></p>
-          <div class="dialog-footer">${button('Cancel', null, 'close-dialog')}<button type="submit" class="button primary">${icon('upload', 16)} Import profile</button></div>
+          <div class="dialog-footer"><button type="button" class="button" data-action="import-review-back" hidden>Back</button>${button('Cancel', null, 'close-dialog')}<button type="submit" class="button primary">${icon('upload', 16)} Import profile</button></div>
         </form>`;
       break;
     case 'launch-options':
@@ -864,8 +917,9 @@ async function launchGame(mode, fingerprint) {
   const profileId = workspace.profile.id;
   const profileName = workspace.profile.name;
   const refs = mode === 'modded' ? enabledRefs() : [];
+  const configFiles = structuredClone(mode === 'modded' ? workspace.profile.configFiles ?? {} : {});
   await gameTask(async () => {
-    await desktop.launchGame(mode, profileId, refs, fingerprint, profileName, gameId);
+    await desktop.launchGame(mode, profileId, refs, fingerprint, profileName, gameId, configFiles);
     workspace.recordLaunch(profileId, mode);
   }, 'Steam received the launch request.');
 }
@@ -875,7 +929,7 @@ async function loadCatalog(append = false) {
   if (!manager.live || ui.page !== 'browse') return;
   if (!desktop?.fetchCatalog) {
     ui.feed = { ...emptyFeed(), error: 'Open the Ember desktop app to connect to Thunderstore.' };
-    render();
+    refreshCatalogResults();
     return;
   }
   if (append && (ui.feed.loading || !ui.feed.hasMore || ui.feed.requestKey !== catalogRequestKey())) return;
@@ -891,10 +945,10 @@ async function loadCatalog(append = false) {
     error: '',
   };
   if (append) refreshCatalogTail();
-  else render();
+  else refreshCatalogResults();
   try {
     const result = await desktop.fetchCatalog({ gameId, query, sort: sort || 'popular', page, category, showDeprecated });
-    if (token !== requestNumber) return;
+    if (token !== requestNumber || requestKey !== catalogRequestKey() || ui.page !== 'browse') return;
     manager.registerPackages(result.mods);
     const mods = new Map((append ? ui.feed.mods : []).map(mod => [mod.id, mod]));
     const added = result.mods.filter(mod => !mods.has(mod.id));
@@ -902,11 +956,11 @@ async function loadCatalog(append = false) {
     ui.feed = { ...result, mods: [...mods.values()], page, requestKey, loading: false, error: '' };
     if (append) app.querySelector('.mod-grid')?.insertAdjacentHTML('beforeend', added.map(modCard).join(''));
   } catch (error) {
-    if (token !== requestNumber) return;
+    if (token !== requestNumber || requestKey !== catalogRequestKey() || ui.page !== 'browse') return;
     ui.feed = { ...ui.feed, loading: false, error: errorMessage(error) };
   }
   if (append) refreshCatalogTail();
-  else render();
+  else refreshCatalogResults();
 }
 
 async function showDetails(id) {
@@ -1073,6 +1127,21 @@ function reportClientBusy() {
   void desktop?.setClientUiBusy?.(busy)?.catch(() => {});
 }
 
+function importSelection(form) {
+  return JSON.stringify(['importSource', 'thunderstoreCode', 'importGame'].map(name => form.elements.namedItem(name)?.value ?? ''));
+}
+
+function clearImportReview(form) {
+  form.importReview = null;
+  form.querySelector('.import-review').hidden = true;
+  form.querySelector('[data-action="import-review-back"]').hidden = true;
+  const error = form.querySelector('.form-error');
+  error.hidden = true;
+  error.textContent = '';
+  for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = false;
+  form.querySelector('[type="submit"]').innerHTML = `${icon('upload', 16)} Import profile`;
+}
+
 function updateClientState(status) {
   ui.clientUpdate = status;
   const message = app.querySelector('#client-update-message');
@@ -1203,6 +1272,12 @@ async function handleAction(action, id) {
       break;
     }
     case 'import': openDialog('import'); break;
+    case 'import-review-back': {
+      const form = dialog.querySelector('#dialog-form');
+      if (!form || form.querySelector('[type="submit"]').disabled) break;
+      clearImportReview(form);
+      break;
+    }
     case 'mod-details': await showDetails(id); break;
     case 'open-downloads': await desktop.openDownloads(); break;
     case 'clear-completed-downloads': await clearCompletedDownloads(); break;
@@ -1249,7 +1324,8 @@ async function handleAction(action, id) {
       const refs = enabledRefs();
       const name = manager.profile.name;
       const { id: gameId, name: gameName } = manager.game;
-      await gameTask(() => desktop.prepareProfile(profileId, refs, name, gameId), `Your ${gameName} profile is ready.`);
+      const configFiles = structuredClone(manager.profile.configFiles ?? {});
+      await gameTask(() => desktop.prepareProfile(profileId, refs, name, gameId, configFiles), `Your ${gameName} profile is ready.`);
       break;
     }
     case 'open-profile': await desktop.openProfile(manager.profile.id, manager.game.id); break;
@@ -1259,9 +1335,10 @@ async function handleAction(action, id) {
       const refs = enabledRefs();
       const name = manager.profile.name;
       const gameId = manager.game.id;
+      const configFiles = structuredClone(manager.profile.configFiles ?? {});
       gameStatusRequestNumber++;
       await gameTask(async () => {
-        const status = await desktop.setupLoader(profileId, refs, name, gameId);
+        const status = await desktop.setupLoader(profileId, refs, name, gameId, configFiles);
         if (gameId === manager.game.id) ui.gameStatus = status;
       }, 'Loader ready. Use Launch modded to start through Steam.');
       break;
@@ -1309,24 +1386,52 @@ document.addEventListener('error', event => {
   image.replaceWith(placeholder);
 }, true);
 
-document.addEventListener('input', event => {
-  if (event.target.id !== 'search-input') return;
-  ui.query = event.target.value;
+function updateSearchResults(composing = false) {
   if (manager.live && ui.page === 'browse') {
     window.clearTimeout(searchTimer);
     window.clearTimeout(prefetchTimer);
     catalogObserver.disconnect();
     requestNumber++;
-    searchTimer = window.setTimeout(() => { void loadCatalog(); }, 300);
-  } else {
+    if (!composing) searchTimer = window.setTimeout(() => { void loadCatalog(); }, 300);
+  } else if (!composing) {
     refreshResults();
   }
+}
+
+document.addEventListener('compositionstart', event => {
+  if (event.target.id !== 'search-input') return;
+  searchComposing = true;
+  updateSearchResults(true);
+});
+
+document.addEventListener('compositionend', event => {
+  if (event.target.id !== 'search-input') return;
+  searchComposing = false;
+  ui.query = event.target.value;
+  updateSearchResults();
+  if (renderAfterComposition) {
+    renderAfterComposition = false;
+    render();
+  }
+});
+
+document.addEventListener('input', event => {
+  if (event.target.id !== 'search-input') return;
+  ui.query = event.target.value;
+  updateSearchResults(searchComposing || event.isComposing);
 });
 
 document.addEventListener('change', event => {
   const target = event.target;
   try {
-    if (target.id === 'catalog-sort') {
+    if (target.id === 'import-source') {
+      const form = target.form;
+      for (const section of form.querySelectorAll('[data-import-section]')) section.hidden = section.dataset.importSection !== target.value;
+      const error = form.querySelector('.form-error');
+      error.hidden = true;
+      error.textContent = '';
+      return;
+    } else if (target.id === 'catalog-sort') {
       window.clearTimeout(searchTimer);
       ui.sort = target.value;
       if (manager.live) void loadCatalog();
@@ -1379,14 +1484,42 @@ document.addEventListener('submit', async event => {
     if (type === 'profile-rename') manager.renameProfile(id, name);
     if (type === 'profile-clone') manager.cloneProfile(id, name);
     if (type === 'import') {
-      const file = data.get('profileFile');
-      if (file.size > MAX_IMPORT_LENGTH) throw new Error('Choose a profile file up to 3 MB.');
+      if (form.importReview && form.importReview.selection !== importSelection(form)) {
+        clearImportReview(form);
+        throw new Error('The profile details changed. Import again to review them.');
+      }
       submit.disabled = true;
-      let content = file.size ? await file.text() : data.get('profileCode');
-      if (typeof content === 'string' && SHORT_PROFILE_CODE.test(content.trim())) {
-        if (!desktop?.resolveProfileCode) throw new Error('Open Ember on desktop to import a share code.');
+      for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = true;
+      const source = data.get('importSource');
+      let content = form.importReview?.content;
+      if (!content && source === 'thunderstore') {
+        if (!desktop?.resolveThunderstoreProfile) throw new Error('Update Ember to import a Thunderstore profile.');
+        const code = String(data.get('thunderstoreCode') ?? '').trim();
+        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) throw new Error('Enter a valid Thunderstore profile code.');
+        const gameId = data.get('importGame');
+        if (!availableGames.some(game => game.id === gameId)) throw new Error('Choose a supported game.');
         submit.innerHTML = `${icon('clock', 16)} Finding profile…`;
-        content = await desktop.resolveProfileCode(content.trim());
+        content = await desktop.resolveThunderstoreProfile(code, gameId);
+        if (!form.isConnected || !dialog.open) return;
+        const payload = JSON.parse(content);
+        const warnings = Array.isArray(payload.importWarnings) ? payload.importWarnings.filter(item => typeof item === 'string') : [];
+        if (warnings.length) {
+          form.importReview = { content, selection: importSelection(form) };
+          const review = form.querySelector('.import-review');
+          review.innerHTML = `<strong>Some files can't be imported</strong><p>Review these files before continuing:</p><ul>${warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+          review.hidden = false;
+          form.querySelector('[data-action="import-review-back"]').hidden = false;
+          return;
+        }
+      } else if (!content) {
+        const file = data.get('profileFile');
+        if (file.size > MAX_IMPORT_LENGTH) throw new Error('Choose a profile file up to 3 MB.');
+        content = file.size ? await file.text() : data.get('profileCode');
+        if (typeof content === 'string' && SHORT_PROFILE_CODE.test(content.trim())) {
+          if (!desktop?.resolveProfileCode) throw new Error('Open Ember on desktop to import a share code.');
+          submit.innerHTML = `${icon('clock', 16)} Finding profile…`;
+          content = await desktop.resolveProfileCode(content.trim());
+        }
       }
       if (!form.isConnected || !dialog.open) return;
       if (manager.live) {
@@ -1394,6 +1527,7 @@ document.addEventListener('submit', async event => {
         const imported = workspace.readImport(content);
         if (!availableGames.some(game => game.id === imported.gameId)) throw new Error('Ember currently supports Lethal Company, R.E.P.O., and PEAK profiles.');
         ui.downloading = true;
+        submit.innerHTML = `${icon('clock', 16)} Importing profile…`;
         notify('Downloading the packages for this profile…');
         try {
           const context = downloadContext(workspace, { ...imported, id: `import-${crypto.randomUUID()}` }, `Import ${imported.name}`);
@@ -1424,7 +1558,9 @@ document.addEventListener('submit', async event => {
     field.textContent = errorMessage(error);
   } finally {
     submit.disabled = false;
-    submit.innerHTML = submitLabel;
+    submit.innerHTML = form.importReview ? `${icon('upload', 16)} Import supported files`
+      : form.elements.namedItem('importSource') ? `${icon('upload', 16)} Import profile` : submitLabel;
+    for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = Boolean(form.importReview);
   }
 });
 

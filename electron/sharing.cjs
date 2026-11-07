@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const { parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES } = require('./thunderstore-profile.cjs');
 
 const ORIGIN = 'https://thunderstore.io';
 const MAX_PROFILE_BYTES = 3 * 1024 * 1024;
@@ -81,7 +82,11 @@ function cdnTarget(location, key, from) {
   return url.href;
 }
 
-function createSharingClient({ fetchImpl = globalThis.fetch } = {}) {
+function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = async (gameId, ref) => {
+  const { fetchPackage, fetchPackageVersion } = require('./thunderstore.cjs');
+  const listing = await fetchPackage(gameId, ref.namespace, ref.name);
+  return listing.version === ref.version ? listing : fetchPackageVersion(gameId, ref.namespace, ref.name, ref.version);
+} } = {}) {
   const published = new Map();
   const pending = new Map();
 
@@ -133,7 +138,7 @@ function createSharingClient({ fetchImpl = globalThis.fetch } = {}) {
     try { return await work; } finally { pending.delete(digest); }
   }
 
-  async function resolveProfile(code) {
+  async function downloadProfile(code, maximum) {
     const key = parseCode(code);
     let url = `${ORIGIN}/api/experimental/legacyprofile/get/${key}/`;
     for (let redirects = 0; redirects <= 2; redirects++) {
@@ -151,12 +156,90 @@ function createSharingClient({ fetchImpl = globalThis.fetch } = {}) {
         await cancelBody(response);
         throw new Error(`Could not load this share code (HTTP ${response.status}). Try again later.`);
       }
-      return profileJson(await readLimited(response, MAX_PROFILE_BYTES), true);
+      return readLimited(response, maximum);
     }
     throw new Error('Could not load this share code.');
   }
 
-  return { publishProfile, resolveProfile };
+  async function resolveProfile(code) {
+    return profileJson(await downloadProfile(code, MAX_PROFILE_BYTES), true);
+  }
+
+  async function resolveThunderstoreProfile(code, gameId) {
+    if (!GAME_IDS.has(gameId)) throw new Error('Choose a supported game before importing.');
+    try { parseCode(code); } catch { throw new Error('Enter a valid Thunderstore profile code.'); }
+    const parsed = await parseThunderstoreProfile(await downloadProfile(code, MAX_NATIVE_PROFILE_BYTES), gameId);
+    const entries = new Map(parsed.mods.map(ref => [`${ref.namespace}/${ref.name}`, { ...ref, explicit: true, mod: null }]));
+    let requests = 0;
+    const newer = (left, right) => {
+      const a = left.split('.').map(Number), b = right.split('.').map(Number);
+      for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] > b[index];
+      return false;
+    };
+    while ([...entries.values()].some(entry => !entry.mod)) {
+      const batch = [...entries.values()].filter(entry => !entry.mod).slice(0, 3);
+      const resolved = await Promise.all(batch.map(async entry => {
+        if (++requests > 1000) throw new Error('The profile has too many dependency version changes.');
+        const ref = { namespace: entry.namespace, name: entry.name, version: entry.version };
+        const mod = await resolvePackage(gameId, ref);
+        if (!mod || mod.id !== `${gameId}/${ref.namespace}/${ref.name}` || mod.namespace !== ref.namespace || mod.name !== ref.name || mod.version !== ref.version ||
+            mod.gameId !== gameId || !Array.isArray(mod.dependencies) || mod.dependencies.length > 300) {
+          throw new Error(`Could not resolve ${ref.namespace}/${ref.name} v${ref.version} for the selected game.`);
+        }
+        return { entry, ref, mod };
+      }));
+      for (const { entry, ref, mod } of resolved) {
+        if (entry.version !== ref.version) continue;
+        entry.mod = mod;
+        for (const dependency of mod.dependencies) {
+          if (typeof dependency?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(dependency.namespace) ||
+              typeof dependency.name !== 'string' || !/^[a-z0-9_]{1,128}$/i.test(dependency.name) ||
+              typeof dependency.version !== 'string' || !/^\d{1,10}\.\d{1,10}\.\d{1,10}$/.test(dependency.version)) {
+            throw new Error('Thunderstore returned an invalid profile dependency.');
+          }
+          const key = `${dependency.namespace}/${dependency.name}`;
+          const existing = entries.get(key);
+          if (!existing) {
+            if (entries.size >= 200) throw new Error('The profile and its dependencies exceed 200 mods.');
+            entries.set(key, { namespace: dependency.namespace, name: dependency.name, version: dependency.version, enabled: false, explicit: false, mod: null });
+          } else if (newer(dependency.version, existing.version)) {
+            if (existing.explicit) throw new Error(`${mod.name} requires ${dependency.name} v${dependency.version}, but the shared profile selects v${existing.version}.`);
+            existing.version = dependency.version;
+            existing.mod = null;
+          }
+        }
+      }
+    }
+    // A higher compatible dependency version can replace an earlier inferred one.
+    // Keep only dependencies required by the final resolved graph.
+    const reachable = new Set();
+    const visit = key => {
+      if (reachable.has(key)) return;
+      reachable.add(key);
+      for (const dependency of entries.get(key).mod.dependencies) visit(`${dependency.namespace}/${dependency.name}`);
+    };
+    for (const [key, entry] of entries) if (entry.explicit) visit(key);
+    for (const [key, entry] of entries) if (!entry.explicit && !reachable.has(key)) entries.delete(key);
+    // Only inferred dependencies follow enabled parents; explicit profile choices stay intact.
+    let changed;
+    do {
+      changed = false;
+      for (const entry of entries.values()) {
+        if (!entry.enabled) continue;
+        for (const dependency of entry.mod.dependencies) {
+          const target = entries.get(`${dependency.namespace}/${dependency.name}`);
+          if (!target.explicit && !target.enabled) { target.enabled = true; changed = true; }
+        }
+      }
+    } while (changed);
+    const mods = [...entries.values()].map(entry => ({ id: entry.mod.id, version: entry.version, enabled: entry.enabled, package: entry.mod }));
+    const result = JSON.stringify({ format: 'modrelay-profile', version: 1, source: 'thunderstore', gameId,
+      name: parsed.name, mods, configs: {}, configFiles: parsed.configFiles, importWarnings: parsed.importWarnings });
+    if (Buffer.byteLength(result, 'utf8') > MAX_PROFILE_BYTES) throw new Error('The converted Ember profile exceeds 3 MB.');
+    return result;
+  }
+
+  return { publishProfile, resolveProfile, resolveThunderstoreProfile };
 }
 
 module.exports = { createSharingClient, MAX_PROFILE_BYTES };

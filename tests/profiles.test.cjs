@@ -137,3 +137,84 @@ test('game profile defaults and cache roots cannot be crossed or selected throug
   assert.throws(() => createProfileBuilder('unused', {}, { gameId: '../repo' }), /supported game/);
 });
 
+test('imported configuration templates apply initially and preserve user edits across rebuilds', async t => {
+  const { builder, requests } = await fixture(t);
+  const imported = { 'example.cfg': 'imported overrides bundled defaults', 'crew/settings.json': '{"crew":"café ☕"}' };
+  const runtime = await builder.prepareProfile(profileId, [loader, plugin], imported);
+  const configPath = path.join(runtime, 'BepInEx', 'config');
+  assert.equal(await readFile(path.join(configPath, 'example.cfg'), 'utf8'), imported['example.cfg']);
+  assert.equal(await readFile(path.join(configPath, 'crew/settings.json'), 'utf8'), imported['crew/settings.json']);
+  const firstDownloads = requests.length;
+  await builder.prepareProfile(profileId, [loader, plugin], imported);
+  assert.equal(requests.length, firstDownloads, 'Unchanged imports reuse the runtime.');
+  await writeFile(path.join(configPath, 'example.cfg'), 'edited after importing');
+  await builder.prepareProfile(profileId, [loader, plugin], { ...imported, 'new.cfg': 'newly imported' });
+  assert(requests.length > firstDownloads, 'Changed templates invalidate the prepared-runtime key.');
+  assert.equal(await readFile(path.join(configPath, 'example.cfg'), 'utf8'), 'edited after importing');
+  assert.equal(await readFile(path.join(configPath, 'new.cfg'), 'utf8'), 'newly imported');
+  await builder.prepareProfile(profileId, [loader], imported);
+  assert.equal(await readFile(path.join(configPath, 'example.cfg'), 'utf8'), 'edited after importing');
+});
+
+test('unsafe imports and configuration staging failures preserve the prior prepared profile', async t => {
+  const { builder, addPackage, requests } = await fixture(t);
+  const runtime = await builder.prepareProfile(profileId, [loader, plugin]);
+  const before = requests.length;
+  await assert.rejects(() => builder.prepareProfile(profileId, [loader, plugin], { '../escape.cfg': 'unsafe' }), /configuration path/);
+  assert.equal(requests.length, before, 'Invalid configuration is rejected before package work.');
+  const conflict = { ...plugin, name: 'DirectoryConflict' };
+  await addPackage(conflict, [{ name: 'config/collision.cfg/inside.cfg', content: 'bundled' }]);
+  await assert.rejects(() => builder.prepareProfile(profileId, [loader, conflict], { 'collision.cfg': 'file' }));
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/config/example.cfg'), 'utf8'), 'bundled defaults');
+  assert.deepEqual(await readdir(path.dirname(runtime)), ['runtime']);
+});
+
+test('shared BepInEx core libraries retain their package layout alongside the approved loader', async t => {
+  const { builder, addPackage } = await fixture(t);
+  const library = { namespace: 'Lordfirespeed', name: 'OdinSerializer', version: '2024.2.2700' };
+  await addPackage(library, [
+    { name: 'BepInEx/core/OdinSerializer/OdinSerializer.dll', content: 'serializer assembly' },
+    { name: 'BepInEx/core/OdinSerializer/OdinSerializer.pdb', content: 'debugging symbols' },
+    { name: 'manifest.json', content: 'package metadata' },
+  ]);
+  const runtime = await builder.prepareProfile(profileId, [plugin, library, loader]);
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/core/OdinSerializer/OdinSerializer.dll'), 'utf8'), 'serializer assembly');
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/core/OdinSerializer/OdinSerializer.pdb'), 'utf8'), 'debugging symbols');
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/core/BepInEx.Preloader.dll'), 'utf8'), 'preloader');
+  assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'doorstop');
+  const coreFiles = await readdir(path.join(runtime, 'BepInEx/core'), { recursive: true });
+  assert(!coreFiles.some(name => path.basename(name) === 'manifest.json'));
+});
+
+test('shared core libraries cannot replace loader files or another package and failures keep the current runtime', async t => {
+  const { builder, addPackage } = await fixture(t);
+  const runtime = await builder.prepareProfile(profileId, [loader, plugin]);
+  const collisions = [
+    ['CoreCollision', 'BepInEx/core/BepInEx.Preloader.dll'],
+    ['ProxyCollision', 'winhttp.dll'],
+    ['DoorstopCollision', 'doorstop_config.ini'],
+    ['UnsupportedLayout', 'BepInEx/unsupported/file.dll'],
+  ];
+  for (const [name, entry] of collisions) {
+    const ref = { namespace: 'Tests', name, version: '1.0.0' };
+    await addPackage(ref, [{ name: entry, content: 'replacement' }]);
+    await assert.rejects(() => builder.prepareProfile(profileId, [loader, plugin, ref]), /same file|layout Ember cannot deploy/);
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/core/BepInEx.Preloader.dll'), 'utf8'), 'preloader');
+    assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'doorstop');
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/config/example.cfg'), 'utf8'), 'bundled defaults');
+    assert.deepEqual(await readdir(path.dirname(runtime)), ['runtime']);
+  }
+});
+
+test('a shared core package cannot fill missing files in an incomplete loader', async t => {
+  const { builder, addPackage, requests } = await fixture(t);
+  const supplemental = { namespace: 'Tests', name: 'Supplement', version: '1.0.0' };
+  await addPackage(supplemental, [{ name: 'BepInEx/core/BepInEx.Preloader.dll', content: 'not from loader' }]);
+  await addPackage(loader, [
+    { name: 'BepInExPack/winhttp.dll', content: 'doorstop' },
+    { name: 'BepInExPack/doorstop_config.ini', content: 'enabled = true' },
+  ]);
+  await assert.rejects(() => builder.prepareProfile(profileId, [loader, supplemental]), /BepInExPack is missing/);
+  assert.deepEqual(requests, ['BepInEx/BepInExPack/5.4.2305']);
+});
+

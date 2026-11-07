@@ -327,6 +327,7 @@ if (!app.requestSingleInstanceLock()) {
     const sharing = createSharingClient();
     handle('share-profile', json => sharing.publishProfile(json));
     handle('resolve-profile-code', code => sharing.resolveProfile(code));
+    handle('resolve-thunderstore-profile', (code, gameId) => sharing.resolveThunderstoreProfile(code, gameId));
     handle('catalog', fetchCatalog);
     handle('package-details', fetchPackage);
     handle('download-history', () => history.list());

@@ -3,6 +3,7 @@ const { constants } = require('node:fs');
 const { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const { extractArchive } = require('./archive.cjs');
+const { normalizeConfigFiles } = require('./config-files.cjs');
 
 const GAME = 'lethal-company';
 const GAMES = new Map([['lethal-company', 'Lethal Company'], ['repo', 'R.E.P.O.'], ['peak', 'PEAK']]);
@@ -48,6 +49,8 @@ function loaderEntry(entry, packName) {
 
 function modEntry(entry, directory) {
   if (PACKAGE_META.test(entry)) return null;
+  const sharedCore = /^bepinex\/core\/(.+)$/i.exec(entry);
+  if (sharedCore) return `BepInEx/core/${sharedCore[1]}`;
   const known = /^(?:bepinex\/)?(plugins|patchers|config)\/(.+)$/i.exec(entry);
   if (known) {
     const kind = known[1].toLowerCase();
@@ -63,8 +66,9 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
   if (!GAMES.has(gameId)) throw new Error('Choose a supported game for profile preparation.');
   const active = new Map();
 
-  async function prepareProfile(id, entries) {
+  async function prepareProfile(id, entries, importedConfigFiles = {}) {
     const base = profileDirectory(root, id, gameId);
+    const configFiles = normalizeConfigFiles(importedConfigFiles);
     if (!Array.isArray(entries) || entries.length > 200) throw new Error('Choose up to 200 enabled packages for this profile.');
     const refs = entries.map(entry => {
       if (typeof entry?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(entry.namespace) ||
@@ -77,9 +81,10 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     const loaderName = gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
     const loader = refs.find(ref => ref.namespace === 'BepInEx' && ref.name === loaderName);
     if (!loader) throw new Error(`Download and enable ${loaderName} in this ${GAMES.get(gameId)} profile.`);
-    const key = createHash('sha256').update(JSON.stringify({ format: FORMAT, refs })).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify({ format: FORMAT, refs,
+      ...(Object.keys(configFiles).length ? { configFiles } : {}) })).digest('hex');
     if (active.has(base)) throw new Error('This profile is already being prepared.');
-    const operation = build(base, key, loader, refs);
+    const operation = build(base, key, loader, refs, configFiles);
     active.set(base, operation);
     try {
       return await operation;
@@ -88,11 +93,11 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     }
   }
 
-  async function build(base, key, loader, refs) {
+  async function build(base, key, loader, refs, configFiles) {
     const runtime = path.join(base, 'runtime');
     const marker = '.modspindle-profile';
     const current = await fileInfo(runtime);
-    if (current && !current.isDirectory()) throw new Error('The profile folder is invalid.');
+    if (current && (!current.isDirectory() || current.isSymbolicLink())) throw new Error('The profile folder is invalid.');
     const previousKey = await readFile(path.join(runtime, marker), 'utf8').catch(error => {
       if (error.code === 'ENOENT') return '';
       throw error;
@@ -117,16 +122,21 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
         await mkdir(part);
         try {
           await extractArchive(archive, part, ref === loader ? entry => loaderEntry(entry, loader.name) : entry => modEntry(entry, folder));
+          if (ref === loader && (!(await fileInfo(path.join(part, PRELOADER)))?.isFile() ||
+              !(await fileInfo(path.join(part, 'winhttp.dll')))?.isFile() ||
+              !(await fileInfo(path.join(part, 'doorstop_config.ini')))?.isFile())) {
+            throw new Error('BepInExPack is missing its Windows loader files.');
+          }
           await copyTree(part, next);
           await rm(part, { recursive: true, force: true });
         } catch (error) {
           throw new Error(`Could not deploy ${ref.name} v${ref.version}. ${error.code === 'EEXIST' ? 'Another package supplies the same file.' : error.message}`);
         }
       }
-      if (!(await fileInfo(path.join(next, PRELOADER)))?.isFile() ||
-          !(await fileInfo(path.join(next, 'winhttp.dll')))?.isFile() ||
-          !(await fileInfo(path.join(next, 'doorstop_config.ini')))?.isFile()) {
-        throw new Error('BepInExPack is missing its Windows loader files.');
+      for (const [relative, content] of Object.entries(configFiles)) {
+        const target = path.join(next, 'BepInEx', 'config', ...relative.split('/'));
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, content, { encoding: 'utf8', mode: 0o600 });
       }
       if (current) await copyTree(path.join(runtime, 'BepInEx', 'config'), path.join(next, 'BepInEx', 'config'), true);
       await writeFile(path.join(next, marker), key, { flag: 'wx' });

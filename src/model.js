@@ -25,7 +25,7 @@ function newId() {
 }
 
 function newProfile(gameId, name, id = newId()) {
-  return { id, gameId, name, mods: [], configs: {} };
+  return { id, gameId, name, mods: [], configs: {}, configFiles: {} };
 }
 
 function initialState(live) {
@@ -138,6 +138,42 @@ function readPackage(value, gameId, allowPreview = false) {
   };
 }
 
+function readConfigFiles(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 128) {
+    throw new Error("Choose up to 128 configuration files.");
+  }
+  const paths = new Map();
+  const files = [];
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  for (const [relative, content] of Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
+    const parts = relative.split("/");
+    if (!relative.isWellFormed() || relative.length > 512 || parts.length > 16 || !/\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i.test(relative) || parts.some(part =>
+      !part || part.length > 255 || part === "." || part === ".." || /[<>:"\\|?*\x00-\x1f\x7f]/.test(part) ||
+      /[. ]$/.test(part) || /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i.test(part.split(".", 1)[0].trimEnd()))) {
+      throw new Error("This profile contains an unsupported configuration path.");
+    }
+    let combined = "";
+    for (const [index, part] of parts.entries()) {
+      combined += (index ? "/" : "") + part;
+      const key = combined.normalize("NFC").toUpperCase();
+      const directory = index < parts.length - 1;
+      const existing = paths.get(key);
+      if (existing && (existing.path !== combined || !existing.directory || !directory)) {
+        throw new Error("This profile contains conflicting configuration paths.");
+      }
+      paths.set(key, { path: combined, directory });
+    }
+    if (typeof content !== "string" || !content.isWellFormed() || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(content) || encoder.encode(content).byteLength > 256 * 1024) {
+      throw new Error("Configuration files must be text up to 256 KB each.");
+    }
+    bytes += encoder.encode(content).byteLength;
+    if (bytes > 1024 * 1024) throw new Error("Profile configuration files exceed 1 MB.");
+    files.push([relative, content]);
+  }
+  return Object.fromEntries(files);
+}
+
 function readProfile(value, live) {
   if (!value || typeof value !== "object" || !getGame(value.gameId) || !Array.isArray(value.mods)) {
     throw new Error("This profile has an unsupported game or invalid mod list.");
@@ -189,7 +225,7 @@ function readProfile(value, live) {
     configs[id] = content;
   }
 
-  return { gameId: value.gameId, name, mods: [...modsById.values()], configs };
+  return { gameId: value.gameId, name, mods: [...modsById.values()], configs, configFiles: readConfigFiles(value.configFiles) };
 }
 
 function loadState(storage, live) {
@@ -576,8 +612,8 @@ export function createManager(storage = globalThis.localStorage, { live = false 
     },
 
     exportProfile(id = activeProfile().id) {
-      const { gameId, name, mods, configs } = findProfile(id);
-      const payload = { format: PROFILE_FORMAT, version: 1, ...(live ? { source: "thunderstore" } : {}), gameId, name, mods, configs };
+      const { gameId, name, mods, configs, configFiles } = findProfile(id);
+      const payload = { format: PROFILE_FORMAT, version: 1, ...(live ? { source: "thunderstore" } : {}), gameId, name, mods, configs, configFiles };
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       return {
         code: toCode(JSON.stringify(payload)),

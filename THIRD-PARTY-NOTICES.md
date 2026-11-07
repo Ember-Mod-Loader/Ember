@@ -1,5 +1,7 @@
 # Third-party notices
 
+- **js-yaml** is MIT licensed and parses Thunderstore profile manifests. Its license is in `resources/licenses/JS-YAML.txt`. [js-yaml](https://github.com/nodeca/js-yaml)
+
 - **Electron** includes Chromium, Node.js, and other components. The packaged app includes `LICENSE.electron.txt` and `LICENSES.chromium.html`. [Electron license](https://github.com/electron/electron/blob/main/LICENSE)
 - **electron-updater** is MIT licensed and provides installed Windows client updates. Its license is in `resources/licenses/Electron-Updater.txt`; its runtime dependencies retain their bundled notices. [electron-builder project](https://github.com/electron-userland/electron-builder)
 - **Manrope**, copyright 2019 The Manrope Project Authors, is licensed under the SIL Open Font License 1.1. The license is in `resources/licenses/Manrope-OFL.txt`. [Manrope project](https://github.com/sharanda/manrope)

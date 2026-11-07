@@ -3,6 +3,7 @@ const { readFile, rename, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const { createSteamAdapter } = require('./steam.cjs');
 const { createProfileBuilder } = require('./profiles.cjs');
+const { normalizeConfigFiles } = require('./config-files.cjs');
 
 function registerGameActions({ directory, cache, history, handle, dialog, shell, getWindow, createLauncher = createSteamAdapter, createProfiles = createProfileBuilder }) {
   const games = new Map([
@@ -41,12 +42,12 @@ function registerGameActions({ directory, cache, history, handle, dialog, shell,
   }
   let busy = false;
 
-  async function prepareProfile(game, profileId, refs, profileName = 'Profile') {
+  async function prepareProfile(game, profileId, refs, profileName = 'Profile', configFiles = {}) {
     const plannedRefs = game.id === 'peak' && Array.isArray(refs)
       ? refs.filter(ref => !(ref?.namespace === 'BepInEx' && ref.name === 'BepInExPack')) : refs;
     preparing = { id: null, gameId: game.id, profileId, refs: plannedRefs, profileName };
     try {
-      const result = await game.profiles.prepareProfile(profileId, refs);
+      const result = await game.profiles.prepareProfile(profileId, refs, configFiles);
       if (preparing.id) {
         await history.ready(preparing.id);
         await history.complete(preparing.id);
@@ -113,23 +114,23 @@ function registerGameActions({ directory, cache, history, handle, dialog, shell,
     await saveGame(context, { gameDir: game.gameDir, approvedLoader: game.loaderFingerprint === found?.loaderFingerprint && found?.loaderApproved ? game.loaderFingerprint : undefined });
     return game;
   }));
-  handle('prepare-profile', (profileId, refs, profileName, gameId) => action(async () => {
+  handle('prepare-profile', (profileId, refs, profileName, gameId, configFiles) => action(async () => {
     const context = getGame(gameId);
     await context.launcher.assertGameClosed();
-    await prepareProfile(context, profileId, refs, profileName);
+    await prepareProfile(context, profileId, refs, profileName, configFiles);
     return true;
   }));
   handle('open-profile', async (profileId, gameId) => {
     const error = await shell.openPath(await getGame(gameId).profiles.openProfilePath(profileId));
     if (error) throw new Error('Could not open the profile folder.');
   });
-  handle('setup-loader', (profileId, refs, profileName, gameId) => action(async () => {
+  handle('setup-loader', (profileId, refs, profileName, gameId, configFiles) => action(async () => {
     const context = getGame(gameId);
     const game = await status(context.id);
     if (!game) throw new Error(`Choose the ${context.name} game folder in Settings.`);
     if (game.loader !== 'clean') throw new Error('This game folder already has a loader. Review its status in Settings.');
     await context.launcher.assertGameClosed();
-    const loaderPath = await prepareProfile(context, profileId, refs, profileName);
+    const loaderPath = await prepareProfile(context, profileId, refs, profileName, configFiles);
     return context.launcher.prepareDoorstop({ gameDir: game.gameDir, loaderPath });
   }));
   handle('remove-loader', gameId => action(async () => {
@@ -138,7 +139,8 @@ function registerGameActions({ directory, cache, history, handle, dialog, shell,
     if (game?.loader !== 'managed') throw new Error('Choose a Steam game folder with an Ember loader.');
     return context.launcher.removeManagedDoorstop(game.gameDir);
   }));
-  handle('launch-game', (mode, profileId, refs, approvedFingerprint, profileName, gameId) => action(async () => {
+  handle('launch-game', (mode, profileId, refs, approvedFingerprint, profileName, gameId, configFiles) => action(async () => {
+    const importedConfigFiles = mode === 'modded' ? normalizeConfigFiles(configFiles) : {};
     const context = getGame(gameId);
     const game = await status(context.id);
     if (!game) throw new Error(`Choose the ${context.name} game folder in Settings.`);
@@ -149,7 +151,7 @@ function registerGameActions({ directory, cache, history, handle, dialog, shell,
     }
     if (remember) await saveGame(context, { gameDir: game.gameDir, approvedLoader: game.loaderFingerprint });
     await context.launcher.assertGameClosed();
-    const profilePath = mode === 'modded' ? await prepareProfile(context, profileId, refs, profileName) : undefined;
+    const profilePath = mode === 'modded' ? await prepareProfile(context, profileId, refs, profileName, importedConfigFiles) : undefined;
     await context.launcher.launchGame({ gameDir: game.gameDir, mode, profilePath, allowExistingDoorstop: game.loaderApproved || remember, loaderFingerprint: game.loaderFingerprint });
     return true;
   }));

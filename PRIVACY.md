@@ -1,6 +1,6 @@
 # Privacy
 
-Applies to Ember 0.5.5.
+Applies to Ember 0.5.6.
 
 ## On your device
 
@@ -15,6 +15,8 @@ The size-limited local `logs/app.log` file records the app version, startup and 
 Completed download-history entries clear automatically after 30 seconds, or when you choose Clear completed. This clears the history entries only; profiles, installed mods, and cached download files stay on your device.
 
 A profile code or JSON export can contain the profile name, game, and package list, along with any settings included in that profile. Anyone who receives an export can read its contents. Review it before sharing.
+
+Thunderstore and r2modman profile imports retrieve the shared archive from Thunderstore and check package versions against the selected game's catalog. Supported configuration files are stored with the local profile and applied to its runtime. Imported configuration templates are included if you later export or share that Ember profile.
 
 ## Network requests
 

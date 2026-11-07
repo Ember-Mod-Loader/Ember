@@ -13,6 +13,25 @@ const PLUGIN = { namespace: 'Tests', name: 'Example', version: '1.0.0' };
 const loaderFor = gameId => gameId === 'peak'
   ? { namespace: 'BepInEx', name: 'BepInExPack_PEAK', version: '5.4.75301' } : GENERIC_LOADER;
 
+test('imported configuration reaches preparation, setup, and modded launch for each game', async t => {
+  const f = await fixture(t);
+  for (const gameId of GAME_IDS) {
+    const loader = loaderFor(gameId);
+    const profileId = `${gameId}-default`;
+    const configurations = { 'imported/settings.cfg': `Game = ${gameId}\n` };
+    assert.equal(await f.invoke('prepare-profile', profileId, [loader], 'Imported', gameId, configurations), true);
+    const runtime = path.join(f.directory, 'profiles', gameId, profileId, 'runtime');
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/config/imported/settings.cfg'), 'utf8'), configurations['imported/settings.cfg']);
+    f.statuses.get(gameId).loader = 'clean';
+    const setupConfigurations = { ...configurations, 'setup.cfg': 'Prepared during setup' };
+    await f.invoke('setup-loader', profileId, [loader], 'Imported', gameId, setupConfigurations);
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/config/setup.cfg'), 'utf8'), 'Prepared during setup');
+    const launchConfigurations = { ...setupConfigurations, 'launch.cfg': 'Prepared during launch' };
+    await f.invoke('launch-game', 'modded', profileId, [loader], undefined, 'Imported', gameId, launchConfigurations);
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/config/launch.cfg'), 'utf8'), 'Prepared during launch');
+  }
+});
+
 async function fixture(t) {
   const directory = await temporaryDirectory(t);
   const events = [];

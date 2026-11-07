@@ -519,3 +519,36 @@ test("category metadata is optional for old profiles and validates bounded label
   assert.deepEqual(workspace.profile.mods[0].package.categories, []);
 });
 
+test("imported configuration files survive profile reload, cloning, and Ember exports", () => {
+  const source = createManager(memoryStorage(), { live: true });
+  const mod = thunderstorePackage("Configured", "1.0.0");
+  source.recordDownloads(source.profile.id, gameId, [mod], [mod.id]);
+  const payload = JSON.parse(source.exportProfile().json);
+  payload.configFiles = { "crew/settings.json": '{"crew":"café ☕"}', "example.cfg": "Enabled = true\r\n" };
+  const storage = memoryStorage();
+  const target = createManager(storage, { live: true });
+  const profile = target.importProfile(JSON.stringify(payload), [mod]);
+  assert.deepEqual(profile.configFiles, payload.configFiles);
+  assert.deepEqual(createManager(storage, { live: true }).profile.configFiles, payload.configFiles);
+  const clone = target.cloneProfile(profile.id, "Copy");
+  assert.deepEqual(clone.configFiles, payload.configFiles);
+  assert.notEqual(clone.configFiles, profile.configFiles);
+  const exported = target.exportProfile(clone.id);
+  assert.deepEqual(target.readImport(exported.code).configFiles, payload.configFiles);
+  assert.deepEqual(JSON.parse(exported.json).configFiles, payload.configFiles);
+  delete payload.configFiles;
+  assert.deepEqual(target.readImport(JSON.stringify(payload)).configFiles, {}, "Old exports remain importable.");
+});
+
+test("invalid imported configuration files cannot create a partial profile", () => {
+  const workspace = createManager(memoryStorage(), { live: true });
+  const payload = JSON.parse(workspace.exportProfile().json);
+  const original = workspace.profiles.length;
+  for (const configFiles of [null, [], { "../escape.cfg": "unsafe" }, { "run.dll": "executable" },
+    { "NUL.cfg": "reserved" }, { "file.cfg": "binary\0text" }, { "Case.cfg": "a", "case.cfg": "b" },
+    { "dir/file.cfg": "a", "DIR/other.cfg": "b" }, { "file.cfg": "é".repeat(128 * 1024 + 1) }]) {
+    assert.throws(() => workspace.importProfile(JSON.stringify({ ...payload, configFiles })), /configuration|Configuration/);
+    assert.equal(workspace.profiles.length, original);
+  }
+});
+

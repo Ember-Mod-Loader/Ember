@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createSharingClient, MAX_PROFILE_BYTES } = require('../electron/sharing.cjs');
+const { zipFixture } = require('./zip-fixture.cjs');
+const yaml = require('js-yaml');
 
 const key = '01a1ad5d-bee6-0706-b9fa-a899094432e0';
 const code = `EMBER-${key}`;
@@ -153,4 +155,106 @@ test('service errors explain unavailable codes, rate limits, and network failure
   await assert.rejects(client.publishProfile(profile), /Could not reach Thunderstore/);
   assert.equal(await client.publishProfile(profile), code);
   assert.equal(attempts, 2);
+});
+
+function nativePayload(mods, files = []) {
+  return '#r2modman\n' + zipFixture([{ name: 'export.r2x', content: yaml.dump({ profileName: 'Thunderstore crew', mods }), deflate: true }, ...files]).toString('base64');
+}
+
+function nativeMod(name, version = '1.0.0', enabled = true) {
+  const [major, minor, patch] = version.split('.').map(Number);
+  return { name, version: { major, minor, patch }, enabled };
+}
+
+function packageFor(gameId, ref, dependencies = []) {
+  return { ...ref, id: `${gameId}/${ref.namespace}/${ref.name}`, gameId, dependencies,
+    description: '', category: 'Mods', categories: [], downloads: 1, icon: '', url: '' };
+}
+
+test('Thunderstore import resolves exact versions, disabled choices, missing dependencies, and config files through the approved CDN', async () => {
+  const selectedGame = 'repo';
+  const calls = [];
+  const payload = nativePayload([
+    nativeMod('Team-Enabled'), nativeMod('Team-Disabled', '2.0.0', false), nativeMod('Team-ExplicitOff', '1.0.0', false),
+  ], [{ name: 'config/Nested/settings.cfg', content: 'Value = original' }, { name: 'custom.ini', content: 'unsupported=root' }]);
+  const client = createSharingClient({ fetchImpl: async url => url === getUrl
+    ? new Response(null, { status: 302, headers: { Location: cdnUrl } }) : new Response(payload),
+  resolvePackage: async (gameId, ref) => {
+    calls.push({ gameId, ...ref });
+    const deps = ref.name === 'Enabled' ? [
+      { namespace: 'Team', name: 'Runtime', version: '1.2.0' },
+      { namespace: 'Team', name: 'ExplicitOff', version: '1.0.0' },
+    ] : ref.name === 'Disabled' ? [{ namespace: 'Team', name: 'OffRuntime', version: '1.0.0' }] : [];
+    return packageFor(gameId, ref, deps);
+  } });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, selectedGame));
+  assert.equal(result.format, 'modrelay-profile');
+  assert.equal(result.gameId, selectedGame);
+  assert.equal(result.name, 'Thunderstore crew');
+  assert.equal(calls.length, 5);
+  assert(calls.every(call => call.gameId === selectedGame));
+  const mods = new Map(result.mods.map(mod => [mod.package.name, mod]));
+  assert.equal(mods.get('Runtime').version, '1.2.0');
+  assert.equal(mods.get('Runtime').enabled, true);
+  assert.equal(mods.get('OffRuntime').enabled, false);
+  assert.equal(mods.get('ExplicitOff').enabled, false);
+  assert.equal(mods.get('Disabled').version, '2.0.0');
+  assert.deepEqual(result.configFiles, { 'Nested/settings.cfg': 'Value = original' });
+  assert.match(result.importWarnings[0], /custom.ini/);
+  const { createManager } = await import('../src/model.js');
+  const storage = { getItem: () => null, setItem: () => {} };
+  const manager = createManager(storage, { live: true });
+  assert.equal(manager.readImport(JSON.stringify(result)).mods.length, 5);
+});
+
+test('Thunderstore import never silently upgrades explicit versions and chooses compatible inferred versions', async () => {
+  const rootMods = [nativeMod('Team-First'), nativeMod('Team-Second')];
+  const resolvePackage = async (gameId, ref) => packageFor(gameId, ref,
+    ref.name === 'First' || ref.name === 'Second' ? [{ namespace: 'Team', name: 'Runtime', version: ref.name === 'First' ? '1.0.0' : '2.0.0' }] : []);
+  const client = createSharingClient({ fetchImpl: async () => new Response(nativePayload(rootMods)), resolvePackage });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'peak'));
+  assert.equal(result.mods.find(mod => mod.package.name === 'Runtime').version, '2.0.0');
+  const conflict = createSharingClient({ fetchImpl: async () => new Response(nativePayload([...rootMods, nativeMod('Team-Runtime', '1.0.0')])), resolvePackage });
+  await assert.rejects(() => conflict.resolveThunderstoreProfile(key, 'peak'), /requires Runtime v2.0.0/);
+});
+
+test('Thunderstore import validates inputs before network use, preserves Ember-mode checks, and refuses cross-game metadata', async () => {
+  let calls = 0;
+  const client = createSharingClient({ fetchImpl: async () => { calls++; return new Response(nativePayload([nativeMod('Team-Plugin')])); },
+    resolvePackage: async (_gameId, ref) => packageFor('peak', ref) });
+  await assert.rejects(() => client.resolveThunderstoreProfile('../invalid', 'repo'), /valid Thunderstore profile code/);
+  await assert.rejects(() => client.resolveThunderstoreProfile(key, 'valheim'), /supported game/);
+  assert.equal(calls, 0);
+  await assert.rejects(() => client.resolveThunderstoreProfile(key, 'repo'), /selected game/);
+  await assert.rejects(() => client.resolveProfile(key), /does not contain an Ember profile/);
+});
+
+test('a compatible inferred upgrade removes dependencies that only the superseded version required', async () => {
+  const client = createSharingClient({ fetchImpl: async () => new Response(nativePayload([nativeMod('Team-First'), nativeMod('Team-Second')])),
+    resolvePackage: async (gameId, ref) => {
+      const dependencies = ref.name === 'First' ? [['Runtime', '1.0.0']]
+        : ref.name === 'Second' ? [['Middle', '1.0.0']]
+        : ref.name === 'Middle' ? [['Runtime', '2.0.0']]
+        : ref.name === 'Runtime' ? [[ref.version === '1.0.0' ? 'OldLeaf' : 'NewLeaf', '1.0.0']] : [];
+      return packageFor(gameId, ref, dependencies.map(([name, version]) => ({ namespace: 'Team', name, version })));
+    } });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'repo'));
+  assert(!result.mods.some(mod => mod.package.name === 'OldLeaf'));
+  assert.equal(result.mods.find(mod => mod.package.name === 'Runtime').version, '2.0.0');
+  assert.equal(result.mods.find(mod => mod.package.name === 'NewLeaf').enabled, true);
+});
+
+test('Thunderstore import limits parallel package resolution and rejects oversized dependency closures', async () => {
+  let active = 0, maximum = 0;
+  const mods = Array.from({ length: 8 }, (_, index) => nativeMod(`Team-Plugin${index}`));
+  const client = createSharingClient({ fetchImpl: async () => new Response(nativePayload(mods)), resolvePackage: async (gameId, ref) => {
+    active++; maximum = Math.max(maximum, active);
+    await new Promise(resolve => setImmediate(resolve)); active--;
+    return packageFor(gameId, ref);
+  } });
+  await client.resolveThunderstoreProfile(key, 'repo');
+  assert.equal(maximum, 3);
+  const tooLarge = createSharingClient({ fetchImpl: async () => new Response(nativePayload([nativeMod('Team-Root')])),
+    resolvePackage: async (gameId, ref) => packageFor(gameId, ref, Array.from({ length: 200 }, (_, index) => ({ namespace: 'Team', name: `Dependency${index}`, version: '1.0.0' }))) });
+  await assert.rejects(() => tooLarge.resolveThunderstoreProfile(key, 'repo'), /exceed 200/);
 });

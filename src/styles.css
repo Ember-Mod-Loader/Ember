@@ -373,6 +373,11 @@ dialog::backdrop { background: #08080bcc; }
 .launch-mode-dialog .action-list .button[aria-pressed="true"] svg { color: #ffb451; }
 .launch-mode-dialog .action-list .button svg { width: 20px; height: 20px; stroke-width: 2; }
 .dialog-form label { display: grid; gap: 5px; margin: 0 0 10px; font-size: 12px; font-weight: 850; }
+.import-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 4px 0 12px; }
+.import-review { margin: 12px 0; padding: 12px; border: 1px solid #eab15b52; border-radius: 8px; background: #dc9b3015; color: #e9c99a; font-size: 12px; line-height: 1.6; }
+.import-review strong { color: #ffdb9d; }
+.import-review p { margin: 6px 0; }
+.import-review ul { margin: 8px 0 0; padding-left: 20px; max-height: 160px; overflow-y: auto; overflow-wrap: anywhere; }
 .dialog-form .dialog-footer { margin: 13px -17px -13px; }
 .field { min-width: 0; color: var(--ink); background: #141317; border: 1px solid #6d4b32; border-radius: 7px; padding: 7px 9px; }
 .code-field { width: 100%; resize: vertical; font: 500 11px/1.55 Consolas, monospace; }
