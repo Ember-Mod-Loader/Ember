@@ -29,7 +29,7 @@ const compactNumber = new Intl.NumberFormat('en', { notation: 'compact', maximum
 const displayTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
-const ui = { page: 'browse', query: '', category: '', sort: '', library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
+const ui = { page: 'browse', query: '', category: '', sort: '', showDeprecated: false, library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
 const startupUpdates = createStartupUpdateFlow({
   start: typeof desktop?.startupClientUpdate === 'function' ? () => desktop.startupClientUpdate() : undefined,
   finish: () => desktop?.finishClientStartup?.(),
@@ -215,6 +215,7 @@ function browsePage() {
     <section class="catalog-section" aria-labelledby="catalog-title">
       <div class="section-heading"><div class="catalog-title"><h1 id="catalog-title">Explore the catalog</h1><span class="total-badge">${count.toLocaleString()} mods</span></div></div>
       <div class="catalog-controls">${searchField('Search mods…')}${categoryControls()}${sortControls()}</div>
+      <label class="deprecated-filter"><input id="show-deprecated" type="checkbox"${ui.showDeprecated ? ' checked' : ''}><span>Show deprecated</span></label>
       <div id="results" aria-live="polite">${catalogResults()}</div>
     </section>`;
 }
@@ -243,7 +244,7 @@ function catalogResults() {
   const { mods, loading, error } = ui.feed;
   const grid = mods.length ? `<div class="mod-grid">${mods.map(modCard).join('')}</div>` : '';
   if (error && !grid) return empty('info', 'Thunderstore unavailable', error, button('Try again', 'refresh', 'reload-catalog'));
-  if (loading && !grid) return empty('clock', 'Connecting to Thunderstore', 'Loading the catalog for this game…');
+  if (loading && !grid) return empty('clock', 'Loading…', '');
   if (!grid) return empty('search', 'No matching mods', 'Try a different search or category.', button('Clear filters', null, 'clear-filters'));
   return `${grid}<div id="catalog-tail">${catalogTail()}</div>`;
 }
@@ -251,7 +252,7 @@ function catalogResults() {
 function catalogTail() {
   if (ui.feed.error) return `<div class="catalog-sentinel" role="status"><span>${esc(ui.feed.error)}</span>${button('Try again', 'refresh', 'retry-more')}</div>`;
   if (!ui.feed.hasMore) return '<div class="catalog-sentinel" role="status">You’re all caught up.</div>';
-  return `<div class="catalog-sentinel" data-catalog-sentinel role="status">${icon('clock', 16)}<span>${ui.feed.loading ? 'Loading more mods…' : 'More mods load as you scroll'}</span></div>`;
+  return `<div class="catalog-sentinel" data-catalog-sentinel role="status">${icon('clock', 16)}<span>${ui.feed.loading ? 'Loading…' : 'More mods load as you scroll'}</span></div>`;
 }
 
 function observeCatalog() {
@@ -274,7 +275,21 @@ function refreshCatalogTail() {
 }
 
 function catalogRequestKey() {
-  return JSON.stringify([manager.game.id, ui.query, ui.category, ui.sort]);
+  return JSON.stringify([manager.game.id, ui.query, ui.category, ui.sort, ui.showDeprecated]);
+}
+
+function modLabels(mod, full = false) {
+  const statuses = [
+    mod.deprecated ? ['deprecated', 'Deprecated'] : null,
+    mod.nsfw ? ['nsfw', 'NSFW'] : null,
+    mod.pinned ? ['pinned', 'Pinned'] : null,
+  ].filter(Boolean);
+  const categories = [...new Set((mod.categories ?? []).map(item => item.name).filter(name => typeof name === 'string' && name.trim()))];
+  if (!full) categories.sort((a, b) => Number(['Mods', 'Misc', 'BepInEx'].includes(a)) - Number(['Mods', 'Misc', 'BepInEx'].includes(b)));
+  const visible = full ? categories : categories.slice(0, 2);
+  const remaining = categories.slice(visible.length);
+  if (!statuses.length && !categories.length) return '';
+  return `<span class="mod-labels${full ? ' full' : ''}" aria-label="Mod tags and status">${statuses.map(([type, label]) => `<span class="mod-badge ${type}">${label}</span>`).join('')}${visible.map(name => `<span class="mod-tag" title="${esc(name)}">${esc(name)}</span>`).join('')}${remaining.length ? `<span class="mod-tag more-tags" title="${esc(remaining.join(', '))}" aria-label="${esc(`${remaining.length} more tags: ${remaining.join(', ')}`)}">+${remaining.length}</span>` : ''}</span>`;
 }
 
 function modCard(mod) {
@@ -287,6 +302,7 @@ function modCard(mod) {
       </button>
       ${iconButton(favorite ? `Remove ${mod.name} from favorites` : `Favorite ${mod.name}`, 'heart', 'favorite', mod.id, favorite)}
     </div>
+    ${modLabels(mod)}
     <p class="mod-description">${esc(mod.description)}</p>
     <div class="mod-card-bottom">
       <div class="mod-stats"><span class="downloads" title="${mod.downloads.toLocaleString()} downloads">${icon('download', 14)} ${compactNumber.format(mod.downloads)}</span>${manager.live ? `<span class="mod-updated">${updateDate(mod.updatedAt)}</span>` : ''}</div>
@@ -296,7 +312,7 @@ function modCard(mod) {
 }
 
 function empty(glyph, title, description, action = '') {
-  return `<div class="empty"><span class="empty-icon">${icon(glyph, 25)}</span><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
+  return `<div class="empty"><span class="empty-icon">${icon(glyph, 25)}</span><h3>${esc(title)}</h3>${description ? `<p>${esc(description)}</p>` : ''}${action}</div>`;
 }
 
 function favoritesPage() {
@@ -352,7 +368,7 @@ function libraryResults() {
   return `<div class="list-panel">${mods.map(({ mod, id, version, enabled, hasUpdate }) => `
     <article class="list-row">
       <button class="mod-link" type="button" data-action="mod-details" data-id="${esc(id)}">
-        ${modArt(mod, 'list-art')}<span class="mod-identity"><strong>${esc(mod.name)}</strong><small>${esc(mod.author)} · v${esc(version)}</small>${manager.live ? `<small>${updateDate(manager.packageById(id)?.updatedAt ?? mod.updatedAt)}</small>` : ''}</span>
+        ${modArt(mod, 'list-art')}<span class="mod-identity"><strong>${esc(mod.name)}</strong><small>${esc(mod.author)} · v${esc(version)}</small>${modLabels(manager.packageById(id) ?? mod)}${manager.live ? `<small>${updateDate(manager.packageById(id)?.updatedAt ?? mod.updatedAt)}</small>` : ''}</span>
       </button>
       <div class="row-actions">
         ${hasUpdate ? button('Update', 'refresh', 'update', { id, style: 'small outline-purple', disabled: ui.downloading }) : ''}
@@ -603,6 +619,8 @@ function renderDialog() {
         <div class="detail-body">
           <div class="detail-package">${modArt(mod, 'detail-art')}<div><div class="detail-category">${esc(mod.category)}</div><h3>${esc(mod.name)}</h3><p>by ${esc(mod.author)}</p></div></div>
           <p class="detail-description">${esc(mod.description)}</p>
+          ${modLabels(mod, true)}
+          ${mod.deprecated ? `<p class="deprecated-notice">${icon('info', 17)}<span><strong>Deprecated mod</strong>Marked as deprecated on Thunderstore. It may be outdated or no longer supported.</span></p>` : ''}
           <dl class="detail-stats"><div><dt>Latest version</dt><dd>${details?.loading ? 'Loading…' : mod.version ? `v${esc(mod.version)}` : 'Unavailable'}</dd></div><div><dt>Thunderstore downloads</dt><dd>${mod.downloads.toLocaleString()}</dd></div></dl>
           ${manager.live ? `<p class="mod-updated">${updateDate(mod.updatedAt)}</p>` : ''}
           <section class="detail-section"><h4>Dependencies</h4>${dependencies.length
@@ -610,7 +628,7 @@ function renderDialog() {
             : `<p>${details?.loading ? 'Loading dependencies…' : details?.error ? 'Dependency information is unavailable.' : 'This package has no dependencies.'}</p>`}</section>
           <section class="detail-section"><h4>Active profile</h4><p>${esc(manager.profile.name)} · ${installed ? `v${esc(installed.version)} ${installed.enabled ? 'enabled' : 'disabled'}` : manager.live ? 'Available to download' : 'Available to install'}</p></section>
           ${manager.live && mod.url ? button('View on Thunderstore', 'diagonal', 'open-package-page', { id }) : ''}
-          <p class="demo-note">${icon('info', 17)}<span>${esc(details?.error || (mod.deprecated ? 'Thunderstore lists this package as deprecated.' : 'Downloads save the mod and its required packages as ZIPs.'))}</span></p>
+          ${details?.error ? `<p class="demo-note">${icon('info', 17)}<span>${esc(details.error)}</span></p>` : ''}
         </div>
         <div class="dialog-footer">${iconButton(favorite ? 'Remove from favorites' : 'Add to favorites', 'heart', 'favorite', id, favorite)}
           ${installed
@@ -864,7 +882,7 @@ async function loadCatalog(append = false) {
   const requestKey = catalogRequestKey();
   const token = ++requestNumber;
   const page = append ? ui.feed.page + 1 : 1;
-  const { query, category, sort } = ui;
+  const { query, category, sort, showDeprecated } = ui;
   const gameId = manager.game.id;
   ui.feed = {
     ...ui.feed,
@@ -875,7 +893,7 @@ async function loadCatalog(append = false) {
   if (append) refreshCatalogTail();
   else render();
   try {
-    const result = await desktop.fetchCatalog({ gameId, query, sort: sort || 'popular', page, category });
+    const result = await desktop.fetchCatalog({ gameId, query, sort: sort || 'popular', page, category, showDeprecated });
     if (token !== requestNumber) return;
     manager.registerPackages(result.mods);
     const mods = new Map((append ? ui.feed.mods : []).map(mod => [mod.id, mod]));
@@ -1117,6 +1135,7 @@ async function handleAction(action, id) {
       ui.query = '';
       ui.category = '';
       ui.sort = '';
+      ui.showDeprecated = false;
       if (manager.live) void loadCatalog();
       else render();
       document.querySelector('#search-input')?.focus();
@@ -1312,6 +1331,11 @@ document.addEventListener('change', event => {
       ui.sort = target.value;
       if (manager.live) void loadCatalog();
       else render();
+    } else if (target.id === 'show-deprecated') {
+      window.clearTimeout(searchTimer);
+      ui.showDeprecated = target.checked;
+      if (manager.live) void loadCatalog();
+      else refreshResults();
     } else if (target.id === 'category-select') {
       window.clearTimeout(searchTimer);
       ui.category = target.value;

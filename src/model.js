@@ -102,6 +102,17 @@ function readReference(value, gameId) {
   return { id: `${gameId}/${namespace}/${name}`, namespace, name, version };
 }
 
+function readCategories(value) {
+  if (!Array.isArray(value)) return [];
+  const categories = new Map();
+  for (const category of value.slice(0, 100)) {
+    if (typeof category?.id !== "string" || !/^\d{1,12}$/.test(category.id) ||
+        typeof category.name !== "string" || !category.name.trim()) continue;
+    categories.set(category.id, { id: category.id, name: category.name.trim().slice(0, 100) });
+  }
+  return [...categories.values()];
+}
+
 function readPackage(value, gameId, allowPreview = false) {
   const reference = readReference(allowPreview && !value?.version ? { ...value, version: "0.0.0" } : value, gameId);
   if (!Array.isArray(value.dependencies) || value.dependencies.length > 300) {
@@ -114,12 +125,15 @@ function readPackage(value, gameId, allowPreview = false) {
     author: reference.namespace,
     description: typeof value.description === "string" ? value.description.slice(0, 300) : "",
     category: typeof value.category === "string" ? value.category.slice(0, 70) : "Mods",
+    categories: readCategories(value.categories),
     icon: trustedUrl(value.icon, ["ccdn.thunderstore.io", "cdn.thunderstore.io", "gcdn.thunderstore.io"]),
     url: trustedUrl(value.url, ["thunderstore.io"]),
     downloads: Number.isSafeInteger(value.downloads) && value.downloads > 0 ? value.downloads : 0,
     updatedAt: typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt)) ? value.updatedAt : null,
     rating: Number.isSafeInteger(value.rating) && value.rating > 0 ? value.rating : 0,
     deprecated: value.deprecated === true,
+    pinned: value.pinned === true,
+    nsfw: value.nsfw === true,
     dependencies: value.dependencies.map(ref => readReference(ref, gameId)),
   };
 }
@@ -266,7 +280,11 @@ export function createManager(storage = globalThis.localStorage, { live = false 
   const packageById = id => packages.get(id) ?? snapshot(id) ?? state.favoritePackages[id];
   const installed = () => activeProfile().mods.map(entry => {
     const latest = packageById(entry.id);
-    const mod = entry.package ?? latest;
+    const snapshotMod = entry.package ?? latest;
+    const mod = live && latest && snapshotMod ? { ...snapshotMod,
+      category: latest.category, categories: latest.categories,
+      deprecated: latest.deprecated, pinned: latest.pinned, nsfw: latest.nsfw,
+    } : snapshotMod;
     return { ...entry, mod, hasUpdate: Boolean(latest?.version && isNewer(entry.version, latest.version)) };
   });
 

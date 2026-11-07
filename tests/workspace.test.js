@@ -473,3 +473,49 @@ test("live update checks compare numeric versions and favorites persist offline"
   assert.equal(reloaded.packageById(latest.id).version, latest.version);
 });
 
+test("package tags and status survive installed profile reloads and sharing", () => {
+  const storage = memoryStorage();
+  const workspace = createManager(storage, { live: true });
+  const mod = { ...thunderstorePackage("Tagged", "1.0.0"), category: "Gameplay",
+    categories: [{ id: "19", name: "Gameplay" }, { id: "20", name: "Client-side" }], deprecated: true, pinned: true, nsfw: false };
+  workspace.recordDownloads(workspace.profile.id, gameId, [mod], [mod.id]);
+  const reloaded = createManager(storage, { live: true });
+  assert.deepEqual(reloaded.installed[0].mod.categories, mod.categories);
+  assert.equal(reloaded.installed[0].mod.deprecated, true);
+  assert.equal(reloaded.installed[0].mod.pinned, true);
+  const exported = reloaded.exportProfile();
+  const target = createManager(memoryStorage(), { live: true });
+  target.importProfile(exported.code, [mod]);
+  assert.deepEqual(target.installed[0].mod.categories, mod.categories);
+  assert.equal(target.installed[0].mod.deprecated, true);
+});
+
+test("fresh catalog status updates installed badges without changing the installed version or dependencies", () => {
+  const workspace = createManager(memoryStorage(), { live: true });
+  const installed = thunderstorePackage("Plugin", "1.0.0");
+  workspace.recordDownloads(workspace.profile.id, gameId, [installed], [installed.id]);
+  const category = { id: "20", name: "Client-side" };
+  workspace.registerPackages([{ ...installed, version: "2.0.0", categories: [category], deprecated: true, pinned: true }]);
+  const entry = workspace.installed[0];
+  assert.equal(entry.version, "1.0.0");
+  assert.equal(entry.mod.version, "1.0.0");
+  assert.equal(entry.hasUpdate, true);
+  assert.deepEqual(entry.mod.dependencies, []);
+  assert.deepEqual(entry.mod.categories, [category]);
+  assert.equal(entry.mod.deprecated, true);
+  assert.equal(entry.mod.pinned, true);
+});
+
+test("category metadata is optional for old profiles and validates bounded labels and IDs", () => {
+  const workspace = createManager(memoryStorage(), { live: true });
+  const mod = thunderstorePackage("Plugin", "1.0.0");
+  workspace.registerPackages([{ ...mod, categories: [{ id: "19", name: "  Gameplay  " }, { id: "19", name: "Updated" },
+    { id: "../unsafe", name: "Unsafe" }, { id: "20", name: " " }, { id: "21", name: "x".repeat(150) }], pinned: "true", nsfw: 1 }]);
+  const normalized = workspace.packageById(mod.id);
+  assert.deepEqual(normalized.categories, [{ id: "19", name: "Updated" }, { id: "21", name: "x".repeat(100) }]);
+  assert.equal(normalized.pinned, false);
+  assert.equal(normalized.nsfw, false);
+  workspace.recordDownloads(workspace.profile.id, gameId, [mod], [mod.id]);
+  assert.deepEqual(workspace.profile.mods[0].package.categories, []);
+});
+

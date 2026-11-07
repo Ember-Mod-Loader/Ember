@@ -85,6 +85,39 @@ test('package details recover exact dependency versions from the version API', a
   ]);
 });
 
+test('deprecated search is opt-in, keeps tag/status metadata, and does not include NSFW packages', async t => {
+  const api = service(t, ({ pathname, searchParams }) => pathname.endsWith('/filters/')
+    ? Response.json({ package_categories: [] })
+    : Response.json({ count: 2, next: null, results: [
+      listing({ name: searchParams.has('deprecated') ? 'OldPlugin' : 'CurrentPlugin', is_deprecated: searchParams.has('deprecated'), is_pinned: true }),
+      listing({ name: 'Filtered', is_nsfw: true }),
+    ] }));
+  const current = await api.fetchCatalog({ gameId });
+  const included = await api.fetchCatalog({ gameId, showDeprecated: true });
+  const queries = api.requests.filter(url => url.pathname.includes('/listing/')).map(url => url.searchParams);
+  assert.equal(queries[0].has('deprecated'), false);
+  assert.equal(queries[1].get('deprecated'), 'true');
+  assert.equal(queries[1].has('nsfw'), false);
+  assert.equal(current.mods[0].deprecated, false);
+  assert.deepEqual(included.mods.map(mod => [mod.name, mod.deprecated, mod.pinned, mod.nsfw, mod.categories]), [
+    ['OldPlugin', true, true, false, [{ id: '19', name: 'Gameplay' }]],
+  ]);
+  await assert.rejects(() => api.fetchCatalog({ gameId, showDeprecated: 'true' }), /invalid Thunderstore search/i);
+});
+
+test('exact-version downloads reuse cached listing tags and flags without an extra metadata request', async t => {
+  const api = service(t, ({ pathname }) => pathname.includes('/listing/')
+    ? Response.json(listing({ is_deprecated: true, is_pinned: true, dependency_count: 0, dependencies: [] }))
+    : Response.json({ namespace: 'Team-Name', name: 'Plugin', version_number: '1.0.0', is_active: true, dependencies: [] }));
+  await api.fetchPackage(gameId, 'Team-Name', 'Plugin');
+  const old = await api.fetchPackageVersion(gameId, 'Team-Name', 'Plugin', '1.0.0');
+  assert.equal(old.version, '1.0.0');
+  assert.equal(old.deprecated, true);
+  assert.equal(old.pinned, true);
+  assert.deepEqual(old.categories, [{ id: '19', name: 'Gameplay' }]);
+  assert.equal(api.requests.length, 2);
+});
+
 test('invalid queries, package identities, and versions do not send network requests', async t => {
   const api = service(t, () => assert.fail('unexpected network request'));
   await assert.rejects(() => api.fetchCatalog({ gameId: '../another-game' }), /does not support/);

@@ -96,6 +96,7 @@ function normalizeListing(gameId, communityId, value) {
     size: count(value.size),
     pinned: value.is_pinned === true,
     deprecated: value.is_deprecated === true,
+    nsfw: value.is_nsfw === true,
     url: packagePage(communityId, identity.namespace, identity.name),
     version,
     dependencies: [],
@@ -144,16 +145,17 @@ function getJson(path, ttl) {
   return result;
 }
 
-async function fetchCatalog({ gameId, query = '', sort = 'popular', page = 1, category = '' } = {}) {
+async function fetchCatalog({ gameId, query = '', sort = 'popular', page = 1, category = '', showDeprecated = false } = {}) {
   const communityId = community(gameId);
   if (typeof query !== 'string' || query.length > 160 || !ORDERS.has(sort) ||
     !Number.isSafeInteger(page) || page < 1 || page > 10000 ||
-    typeof category !== 'string' || (category && !/^\d{1,12}$/.test(category))) {
+    typeof category !== 'string' || (category && !/^\d{1,12}$/.test(category)) || typeof showDeprecated !== 'boolean') {
     throw new Error('Invalid Thunderstore search options.');
   }
   const params = new URLSearchParams({ ordering: ORDERS.get(sort), page: String(page) });
   if (query.trim()) params.set('q', query.trim());
   if (category) params.set('included_categories', category);
+  if (showDeprecated) params.set('deprecated', 'true');
   const [listing, filters] = await Promise.all([
     getJson(`/api/cyberstorm/listing/${communityId}/?${params}`, 5 * 60_000),
     getJson(`/api/cyberstorm/community/${communityId}/filters/`, 60 * 60_000),
@@ -198,8 +200,14 @@ async function fetchPackageVersion(gameId, namespace, name, version) {
   if (value?.namespace !== namespace || value.name !== name || value.version_number !== version || value.is_active !== true) {
     throw new Error(`Thunderstore does not have an active ${namespace}/${name} v${version} download.`);
   }
+  // Exact-version responses may omit community metadata. Reuse a listing already
+  // fetched for this package without adding requests to profile downloads.
+  const listing = cache.get(`/api/cyberstorm/listing/${communityId}/${namespace}/${name}/`)?.body;
+  const metadata = listing?.community_identifier === communityId && listing.namespace === namespace && listing.name === name
+    ? listing : value;
   return {
     ...normalizeListing(gameId, communityId, {
+      ...metadata,
       ...identity,
       description: value.description,
       icon_url: value.icon,

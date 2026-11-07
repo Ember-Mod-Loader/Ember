@@ -33,6 +33,7 @@ Ember finds supported games in your Steam libraries. If a game isn't found, choo
 ## Features
 
 - Browse Thunderstore by search, category, downloads, or recent updates.
+- See package tags and deprecated labels, with an option to include deprecated mods in searches.
 - Install mods and their required packages together.
 - Enable, disable, update, and remove individual mods, with prompts for affected dependencies.
 - Keep separate profiles and share mod lists with an Ember profile code.
