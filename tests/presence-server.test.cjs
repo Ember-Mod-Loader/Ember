@@ -92,3 +92,41 @@ test('heartbeat cooldown and bounded capacity protect existing sessions without 
   f.advance(60_000);
   assert.equal((await f.call('/v1/heartbeat', 'POST', { sessionId: c })).body.online, 2);
 });
+
+test('rapid restarts replace one lease and stale requests cannot remove or renew its newer connection', async t => {
+  const f = await fixture(t);
+  const sessionId = randomUUID();
+  const first = { sessionId, connectionId: randomUUID(), generation: 1 };
+  const second = { sessionId, connectionId: randomUUID(), generation: 2 };
+  assert.equal((await f.call('/v1/heartbeat', 'POST', first)).body.online, 1);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', second)).body.online, 1);
+  assert.equal((await f.call('/v1/session', 'DELETE', first)).body.online, 1);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', first)).status, 409);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', { ...second, connectionId: randomUUID() })).status, 409);
+  assert.equal((await f.call('/v1/session', 'DELETE', { sessionId })).body.online, 1);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', { sessionId })).status, 409);
+  assert.equal((await f.call('/v1/session', 'DELETE', second)).body.online, 0);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', second)).status, 409);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', { sessionId, connectionId: randomUUID(), generation: 3 })).body.online, 1);
+});
+
+test('a leave arriving before its heartbeat retires that connection without inventing an online client', async t => {
+  const f = await fixture(t);
+  const identity = { sessionId: randomUUID(), connectionId: randomUUID(), generation: 1 };
+  assert.equal((await f.call('/v1/session', 'DELETE', identity)).body.online, 0);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', identity)).status, 409);
+  f.advance(30_000);
+  await f.call('/v1/session', 'DELETE', identity);
+  f.advance(90_000);
+  assert.equal((await f.call('/v1/heartbeat', 'POST', identity)).body.online, 1);
+});
+
+test('invalid modern connection metadata does not register sessions', async t => {
+  const f = await fixture(t);
+  const valid = { sessionId: randomUUID(), connectionId: randomUUID(), generation: 1 };
+  for (const body of [{ ...valid, generation: 0 }, { ...valid, generation: 1.5 }, { ...valid, generation: '1' },
+    { ...valid, connectionId: 'invalid' }, { ...valid, username: 'private' }]) {
+    assert.equal((await f.call('/v1/heartbeat', 'POST', body)).status, 400);
+  }
+  assert.equal((await f.call('/v1/online')).body.online, 0);
+});

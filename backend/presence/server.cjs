@@ -2,6 +2,7 @@ const http = require('node:http');
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BODY_LIMIT = 256;
+const RETIRED_TTL_MS = 120_000;
 
 function createPresenceServer({ now = Date.now, ttlMs = 90_000, maxSessions = 50_000, cooldownMs = 10_000 } = {}) {
   const sessions = new Map();
@@ -10,7 +11,8 @@ function createPresenceServer({ now = Date.now, ttlMs = 90_000, maxSessions = 50
   }
   function snapshot(time) {
     prune(time);
-    return { online: sessions.size, ttlSeconds: Math.ceil(ttlMs / 1000), serverTime: new Date(time).toISOString() };
+    const online = [...sessions.values()].filter(session => session.active).length;
+    return { online, ttlSeconds: Math.ceil(ttlMs / 1000), serverTime: new Date(time).toISOString() };
   }
   function send(response, status, data, extra = {}) {
     response.writeHead(status, {
@@ -33,9 +35,13 @@ function createPresenceServer({ now = Date.now, ttlMs = 90_000, maxSessions = 50
       request.on('end', () => {
         try {
           const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 1 ||
+          if (!value || typeof value !== 'object' || Array.isArray(value) ||
               typeof value.sessionId !== 'string' || !SESSION_ID.test(value.sessionId)) throw new Error('Invalid session.');
-          resolve(value.sessionId.toLowerCase());
+          const legacy = Object.keys(value).length === 1;
+          if (!legacy && (Object.keys(value).length !== 3 || typeof value.connectionId !== 'string' ||
+              !SESSION_ID.test(value.connectionId) || !Number.isSafeInteger(value.generation) || value.generation < 1)) throw new Error('Invalid session.');
+          resolve({ sessionId: value.sessionId.toLowerCase(),
+            connectionId: legacy ? null : value.connectionId.toLowerCase(), generation: legacy ? 0 : value.generation });
         } catch { reject(Object.assign(new Error('Use a valid temporary session ID.'), { status: 400 })); }
       });
     });
@@ -62,20 +68,29 @@ function createPresenceServer({ now = Date.now, ttlMs = 90_000, maxSessions = 50
       send(response, 413, { error: 'Request too large.' }, { connection: 'close' }); return;
     }
     try {
-      const id = await readSession(request);
+      const identity = await readSession(request);
+      const id = identity.sessionId;
       const time = now();
       prune(time);
+      const existing = sessions.get(id);
+      const sameOwner = existing && existing.generation === identity.generation && existing.connectionId === identity.connectionId;
       if (expectedMethod === 'DELETE') {
-        sessions.delete(id);
+        // Keep a short retirement record so a delayed heartbeat cannot resurrect a closed client.
+        if ((!existing && sessions.size < maxSessions) || (sameOwner && existing.active)) {
+          sessions.set(id, { ...identity, active: false, lastSeen: time, expiresAt: time + RETIRED_TTL_MS });
+        }
       } else {
-        const existing = sessions.get(id);
-        if (existing && time - existing.lastSeen < cooldownMs) {
+        if (existing && (identity.generation < existing.generation ||
+            (identity.generation === existing.generation && (!sameOwner || !existing.active)))) {
+          send(response, 409, { error: 'This connection has been replaced or closed.' }); return;
+        }
+        if (sameOwner && existing.active && time - existing.lastSeen < cooldownMs) {
           send(response, 429, { error: 'Wait before sending another heartbeat.' }, { 'retry-after': String(Math.ceil((cooldownMs - (time - existing.lastSeen)) / 1000)) }); return;
         }
         if (!existing && sessions.size >= maxSessions) {
           send(response, 503, { error: 'The online service is temporarily full.' }, { 'retry-after': '30' }); return;
         }
-        sessions.set(id, { lastSeen: time, expiresAt: time + ttlMs });
+        sessions.set(id, { ...identity, active: true, lastSeen: time, expiresAt: time + ttlMs });
       }
       send(response, 200, snapshot(time));
     } catch (error) {
