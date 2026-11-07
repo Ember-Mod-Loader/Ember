@@ -1,0 +1,9 @@
+{
+  "name": "ember-presence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Temporary anonymous online sessions for Ember",
+  "license": "MIT",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": { "start": "node server.cjs" }
+}

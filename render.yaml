@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ember-presence
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: backend/presence
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/presence/**
+        - render.yaml
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
