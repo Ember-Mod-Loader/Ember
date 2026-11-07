@@ -1,7 +1,7 @@
 {
   "name": "modrelay",
   "productName": "Ember",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Open-source Thunderstore mod manager for Windows",
   "author": "Ember",
@@ -104,5 +104,8 @@
   "homepage": "https://github.com/Ember-Mod-Loader/Ember",
   "bugs": {
     "url": "https://github.com/Ember-Mod-Loader/Ember/issues"
+  },
+  "emberPresence": {
+    "endpoint": "https://ember-presence.onrender.com"
   }
 }

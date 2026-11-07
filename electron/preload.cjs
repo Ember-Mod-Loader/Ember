@@ -4,6 +4,12 @@ document.addEventListener('DOMContentLoaded', () => document.documentElement.cla
 contextBridge.exposeInMainWorld('modRelayDesktop', {
   windowCommand: command => ipcRenderer.invoke('modrelay:window-command', command),
   windowState: () => ipcRenderer.invoke('modrelay:window-state'),
+  presenceStatus: () => ipcRenderer.invoke('modrelay:presence-status'),
+  onPresence: callback => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on('modrelay:presence-state', listener);
+    return () => ipcRenderer.removeListener('modrelay:presence-state', listener);
+  },
   checkClientUpdate: () => ipcRenderer.invoke('modrelay:client-update'),
   clientUpdateStatus: () => ipcRenderer.invoke('modrelay:client-update-status'),
   installClientUpdate: () => ipcRenderer.invoke('modrelay:install-client-update'),

@@ -28,6 +28,8 @@ const displayTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', ti
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
 const ui = { page: 'browse', query: '', category: '', sort: '', library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
+let presenceState = { status: typeof desktop?.presenceStatus === 'function' ? 'connecting' : 'not-configured', count: null, updatedAt: null };
+let presenceEventsSeen = 0;
 let requestNumber = 0;
 let gameStatusRequestNumber = 0;
 let searchTimer;
@@ -62,6 +64,39 @@ const modArt = (mod, sizeClass = '') => mod.icon
 const pageLabel = page => pages[page][0];
 const nativeLaunchSupported = () => manager.live && availableGames.some(game => game.id === manager.game.id);
 const errorMessage = error => String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+const PRESENCE_TOOLTIP = 'Active Ember app sessions in the last 90 seconds. Refreshes about every 30 seconds.';
+
+function presencePresentation() {
+  const online = presenceState.status === 'online' && Number.isSafeInteger(presenceState.count) && presenceState.count >= 0;
+  const label = online ? `${presenceState.count.toLocaleString()} online`
+    : presenceState.status === 'connecting' ? 'Connecting…' : 'Online count unavailable';
+  return {
+    status: online ? 'online' : presenceState.status === 'connecting' ? 'connecting' : 'unavailable',
+    label,
+    accessibleLabel: online ? `${presenceState.count.toLocaleString()} active Ember ${presenceState.count === 1 ? 'session' : 'sessions'} online` : label,
+  };
+}
+
+function presencePill() {
+  const { status, label, accessibleLabel } = presencePresentation();
+  return `<div id="presence-status" class="presence-pill" data-status="${status}" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(accessibleLabel)}" title="${PRESENCE_TOOLTIP}"><span class="presence-dot" aria-hidden="true"></span><span class="presence-text">${esc(label)}</span></div>`;
+}
+
+function updatePresence(value) {
+  const status = ['connecting', 'online', 'unavailable', 'not-configured'].includes(value?.status) ? value.status : 'unavailable';
+  presenceState = {
+    status,
+    count: status === 'online' && Number.isSafeInteger(value?.count) && value.count >= 0 ? value.count : null,
+    updatedAt: typeof value?.updatedAt === 'string' && Number.isFinite(Date.parse(value.updatedAt)) ? value.updatedAt : null,
+  };
+  const pill = document.querySelector('#presence-status');
+  if (!pill) return;
+  const presentation = presencePresentation();
+  if (pill.dataset.status !== presentation.status) pill.dataset.status = presentation.status;
+  const text = pill.querySelector('.presence-text');
+  if (text.textContent !== presentation.label) text.textContent = presentation.label;
+  if (pill.getAttribute('aria-label') !== presentation.accessibleLabel) pill.setAttribute('aria-label', presentation.accessibleLabel);
+}
 
 function button(label, glyph, action, options = {}) {
   const { id, style = '', disabled = false, end, pressed } = options;
@@ -128,6 +163,7 @@ function render() {
         </div>
         <div class="top-actions">
           <button type="button" class="source-badge demo-badge" data-action="about"><span></span>Thunderstore</button>
+          ${presencePill()}
           <button type="button" class="profile-picker" data-action="pick-profile" aria-label="Switch profile, ${esc(profile.name)}">
             <span class="profile-icon">${icon('users', 15)}</span><span class="profile-picker-name">${esc(profile.name)}</span>${icon('down', 15)}
           </button>
@@ -1450,6 +1486,24 @@ desktop?.windowState?.().then(updateWindowState);
 desktop?.onDownloadProgress?.(updateDownloadRecord);
 desktop?.onClientUpdate?.(updateClientState);
 void desktop?.clientUpdateStatus?.().then(updateClientState).catch(() => {});
+
+try {
+  const unsubscribe = desktop?.onPresence?.(status => {
+    presenceEventsSeen++;
+    updatePresence(status);
+  });
+  if (typeof unsubscribe === 'function') window.addEventListener('beforeunload', unsubscribe, { once: true });
+} catch {
+  updatePresence({ status: 'unavailable' });
+}
+if (typeof desktop?.presenceStatus === 'function') {
+  const initialEvent = presenceEventsSeen;
+  Promise.resolve().then(() => desktop.presenceStatus()).then(status => {
+    if (presenceEventsSeen === initialEvent) updatePresence(status);
+  }).catch(() => {
+    if (presenceEventsSeen === initialEvent) updatePresence({ status: 'unavailable' });
+  });
+}
 
 async function loadDownloadHistory() {
   if (!desktop?.downloadHistory) return;

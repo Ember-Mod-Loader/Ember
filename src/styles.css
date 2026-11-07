@@ -144,6 +144,11 @@ h1, h2, h3, h4, p, dl, dd { margin: 0; }
 .demo-badge, .source-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px; border: 1px solid #365c31; background: #1b311b; color: #b6e9a6; white-space: nowrap; font-size: 10px; font-weight: 800; }
 .demo-badge span, .source-badge span { width: 5px; height: 5px; border-radius: 50%; background: #83de69; }
 .demo-badge:hover, .source-badge:hover { background: #294329; }
+.presence-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 215px; min-height: 25px; padding: 4px 8px; border: 1px solid #bda58f33; border-radius: 5px; background: #211a15; color: #cbbeb1; font: 650 10px/1.5 "Manrope Variable", sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.presence-dot { width: 5px; height: 5px; flex: none; border-radius: 50%; background: #a3968a; }
+.presence-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.presence-pill[data-status="online"] { border-color: #426c3d; background: #1c2b1b; color: #c5eeb7; }
+.presence-pill[data-status="online"] .presence-dot { background: #8bd778; }
 .profile-picker { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 8px 0 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); font-weight: 800; font-size: 11px; }
 .profile-picker:hover { border-color: #9b4d23; }
 .profile-picker > svg { color: var(--muted); }
@@ -456,11 +461,15 @@ body:has(#startup:not([hidden])) { overflow: hidden; }
 }
 
 @media (max-width: 570px) {
-  .topbar { height: 55px; padding-inline: 13px; gap: 8px; }
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; height: auto; min-height: 55px; padding: 8px 13px; gap: 8px; }
   .breadcrumbs, .top-actions { gap: 5px; }
+  .breadcrumbs { grid-column: 1; grid-row: 1; }
   .crumb-game, .breadcrumbs > svg { display: none; }
   .breadcrumbs strong { overflow: hidden; text-overflow: ellipsis; }
-  .top-actions { flex: none; }
+  .top-actions { display: contents; }
+  .top-actions .source-badge { grid-column: 1; grid-row: 2; justify-self: start; }
+  .presence-pill { grid-column: 2; grid-row: 2; justify-self: end; max-width: min(215px, 50vw); }
+  .profile-picker { grid-column: 2; grid-row: 1; justify-self: end; }
   .content { padding: 18px 13px 26px; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .heading-actions { justify-content: flex-start; }

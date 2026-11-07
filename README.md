@@ -38,6 +38,7 @@ Browse each game's Thunderstore catalog, install mods with their dependencies, a
 - **Find your next mod.** Search, filter by category, and sort by downloads, recent updates, rating, or newest. More results load automatically.
 - **Keep control of your collection.** Enable, disable, update, or remove individual mods. Dependency prompts explain which other mods are affected.
 - **See what's happening.** Follow package progress in Downloads and check the installed and enabled counts for your current profile.
+- **See the community online.** A small header counter shows active Ember app sessions. It refreshes about every 30 seconds, and inactive sessions expire after 90 seconds. No account or persistent device identifier is needed.
 - **Make it yours.** Choose one of six wallpapers. Your background stays with you across profiles, games, and restarts.
 
 ## Start playing

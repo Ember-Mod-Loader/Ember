@@ -10,6 +10,8 @@ const { registerGameActions } = require('./game-actions.cjs');
 const { createDownloadHistory } = require('./download-history.cjs');
 const { createSharingClient } = require('./sharing.cjs');
 const { createClientUpdates } = require('./client-updates.cjs');
+const { createPresence } = require('./presence.cjs');
+const { emberPresence } = require('../package.json');
 const { assertSupportedGamesClosed } = require('./steam.cjs');
 
 const appScheme = 'modrelay';
@@ -206,6 +208,14 @@ if (!app.requestSingleInstanceLock()) {
       directory: app.getPath('userData'), cache, history, handle, dialog, shell, getWindow: () => window,
     });
     gameWorkBusy = gameActions.isBusy;
+    const presence = createPresence({
+      endpoint: emberPresence?.endpoint ?? null,
+      publish: status => {
+        if (window && !window.webContents.isDestroyed()) window.webContents.send('modrelay:presence-state', status);
+      },
+    });
+    handle('presence-status', () => presence.getStatus());
+    app.once('before-quit', () => { void presence.dispose(); });
     handle('window-state', () => ({ maximized: window.isMaximized() }));
     const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE);
     const installed = app.isPackaged && process.platform === 'win32' && !portable &&
@@ -289,6 +299,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     // Update availability never blocks workspace startup or offline mod management.
     window.webContents.once('did-finish-load', () => {
+      presence.start();
       if (installed) void clientUpdates.checkForUpdates({ automatic: true });
     });
   }).catch(error => {
