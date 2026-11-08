@@ -307,7 +307,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     handle('startup-client-update', () => startupUpdates.start());
     handle('finish-client-startup', () => startupUpdates.finish());
-    handle('client-update', () => clientUpdates.checkForUpdates({ installWhenReady: true }));
+    handle('client-update', () => clientUpdates.checkForUpdates());
     handle('client-update-status', () => clientUpdates.getStatus());
     handle('install-client-update', () => clientUpdates.installUpdate());
     handle('client-ui-busy', busy => {

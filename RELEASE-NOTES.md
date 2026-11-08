@@ -1,8 +1,8 @@
-# Ember 0.6.4
+# Ember 0.6.5
 
-- First Flame is now available to everyone in Settings → Wallpapers without a code.
-- Removed Aurora. Anyone using it switches to Main; other wallpaper choices are preserved.
-- Added Share mods to Installed mods, so you can create a code for the active profile directly from its mod list.
+- Manual client updates now wait for you to choose Install and restart after the download is ready.
+- Checking for updates in Settings also stops a pending automatic restart from a late startup download.
+- Once confirmed, installation stays silent and Ember reopens automatically. Startup updates keep their automatic behavior.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

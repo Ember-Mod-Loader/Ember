@@ -1221,13 +1221,14 @@ async function checkClientUpdate() {
   openDialog('client-update', request);
   const trigger = app.querySelector('[data-action="client-update"]');
   if (trigger) trigger.disabled = true;
+  const initialUpdateEvent = clientUpdateEventsSeen;
   try {
     const status = desktop?.checkClientUpdate ? await desktop.checkClientUpdate() : {
       version: CLIENT_VERSION, status: 'unsupported', message: 'Client updates are available in the installed Windows app.',
     };
-    if (ui.clientUpdate?.status !== 'installing') ui.clientUpdate = status;
+    if (clientUpdateEventsSeen === initialUpdateEvent && ui.clientUpdate?.status !== 'installing') ui.clientUpdate = status;
   } catch (error) {
-    if (ui.clientUpdate?.status !== 'installing') ui.clientUpdate = { version: CLIENT_VERSION, status: 'error', message: errorMessage(error) };
+    if (clientUpdateEventsSeen === initialUpdateEvent && ui.clientUpdate?.status !== 'installing') ui.clientUpdate = { version: CLIENT_VERSION, status: 'error', message: errorMessage(error) };
   } finally {
     ui.checkingClientUpdate = false;
     if (ui.dialog?.type === 'client-update' && ui.dialog.id === request) renderDialog();

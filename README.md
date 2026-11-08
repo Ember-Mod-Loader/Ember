@@ -97,7 +97,7 @@ The **Downloads** tab shows progress and the destination profile. Completed entr
 
 The installed app checks for updates on its loading screen, shows download progress, and reopens after installation. A running game or active profile work delays installation. Failed or stalled checks let you continue into the workspace.
 
-Choose **Settings → Update client** to download an available update and let Ember install silently and reopen when active work has finished. If a restart couldn't finish, use **Install and restart** to try again. Portable builds are updated manually from the release page.
+Choose **Settings → Update client** to check for and download an available update. When it is ready, choose **Install and restart**. Ember installs silently and reopens. If active work blocks installation, finish that work and choose **Install and restart** again. Portable builds are updated manually from the release page.
 
 If you're upgrading from 0.4.x, install a current release once to get automatic updates. Your profiles and preferences are preserved.
 
