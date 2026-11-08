@@ -55,6 +55,27 @@ test('Windows profile separators normalize before validation, including traversa
   ]) await assert.rejects(parseThunderstoreProfile(archive(files), 'peak'));
 });
 
+test('root Doorstop configuration is ignored without hiding mod settings or bypassing archive validation', async () => {
+  const result = await parseThunderstoreProfile(archive([
+    { name: 'DOORSTOP_CONFIG.INI', content: '[General]\ntarget_assembly=C:\\OtherManager\\BepInEx.Preloader.dll' },
+    { name: 'config\\BepInEx.cfg', content: 'Logging = true' },
+    { name: 'config/doorstop_config.ini', content: 'A mod setting with the same filename' },
+    { name: 'custom/doorstop_config.ini', content: 'Unsupported mod setting' },
+  ]), 'peak');
+  assert.deepEqual(result.mods.map(mod => [mod.name, mod.enabled]), [['Plugin', false], ['Runtime', true]]);
+  assert.deepEqual(result.configFiles, {
+    'BepInEx.cfg': 'Logging = true', 'doorstop_config.ini': 'A mod setting with the same filename',
+  });
+  assert.equal(result.importWarnings.length, 1);
+  assert.match(result.importWarnings[0], /custom\/doorstop_config\.ini/);
+  for (const entry of [
+    { name: 'doorstop_config.ini', content: 'x', checksum: 0 },
+    { name: 'doorstop_config.ini', content: 'binary\0file' },
+    { name: '../doorstop_config.ini', content: 'unsafe' },
+    { name: 'doorstop_config.ini', content: 'x'.repeat(256 * 1024 + 1), deflate: true },
+  ]) await assert.rejects(parseThunderstoreProfile(archive([entry]), 'peak'));
+});
+
 test('MIMESIS native profiles preserve MelonLoader UserData text separately from BepInEx configuration', async () => {
   const result = await parseThunderstoreProfile(archive([
     { name: 'UserData/MelonPreferences.cfg', content: '[Crew]\nName = café ☕', deflate: true },

@@ -1,6 +1,6 @@
 # Privacy
 
-Applies to Ember 0.6.0.
+Applies to Ember 0.6.1.
 
 ## On your device
 

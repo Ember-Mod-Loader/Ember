@@ -9,6 +9,8 @@ const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 const TEXT_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i;
+// Mod lists come from export.r2x; Ember uses the selected loader's configuration.
+const MANAGER_FILE = /^(?:mods\.yml|doorstop_config\.ini)$/i;
 const INVALID_CHARACTER = /[<>:"\\|?*\x00-\x1f\x7f]/;
 const RESERVED_DEVICE = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i;
 
@@ -101,7 +103,7 @@ async function parseThunderstoreProfile(value, gameId) {
       const config = /^(?:BepInEx\/)?config\/(.+)$/i.exec(entry.fileName);
       const userData = /^UserData\/(.+)$/i.exec(entry.fileName);
       if (!isManifest && !TEXT_EXTENSION.test(entry.fileName)) throw new Error('The profile contains an executable or unsupported file.');
-      const maximum = isManifest ? MAX_MANIFEST_BYTES : config || userData ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
+      const maximum = isManifest ? MAX_MANIFEST_BYTES : config || userData || /^doorstop_config\.ini$/i.test(entry.fileName) ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
       if (entry.uncompressedSize > maximum) throw new Error('A profile file exceeds its supported size limit.');
       const stream = await archive.openReadStreamPromise(entry);
       const chunks = [];
@@ -120,7 +122,7 @@ async function parseThunderstoreProfile(value, gameId) {
       } else if (userData) {
         if (Object.hasOwn(userDataFiles, userData[1])) throw new Error('The profile contains conflicting configuration paths.');
         userDataFiles[userData[1]] = text;
-      } else if (!/^mods\.yml$/i.test(entry.fileName)) skipped.push(entry.fileName);
+      } else if (!MANAGER_FILE.test(entry.fileName)) skipped.push(entry.fileName);
     }
     if (!manifest) throw new Error('The Thunderstore profile is missing export.r2x.');
     const warnings = skipped.slice(0, 10).map(name => `Not imported: ${name} (outside BepInEx/config or UserData).`);

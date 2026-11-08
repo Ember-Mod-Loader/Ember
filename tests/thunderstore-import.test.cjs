@@ -25,6 +25,7 @@ function archive(extra = []) {
   return '#r2modman\n' + zipFixture([
     { name: 'export.r2x', content: yaml.dump({ profileName: 'Imported crew', mods }), deflate: true },
     { name: 'config/Nested/settings.cfg', content: configuration, deflate: true },
+    { name: 'doorstop_config.ini', content: '[General]\ntarget_assembly=C:\\OtherManager\\BepInEx.Preloader.dll' },
     ...extra,
   ]).toString('base64');
 }
@@ -71,6 +72,7 @@ async function fixture(t) {
 async function importProfile(client, manager) {
   const json = await client.resolveThunderstoreProfile(code, gameId);
   const parsed = manager.readImport(json);
+  assert.deepEqual(JSON.parse(json).importWarnings, [], 'Manager-owned Doorstop configuration must not cause an unsupported-file review.');
   return manager.importProfile(json, parsed.mods.map(entry => entry.package));
 }
 
@@ -103,6 +105,7 @@ test('a native shared profile becomes an Ember profile with exact versions, disa
   const active = imported.mods.filter(entry => entry.enabled).map(entry => entry.package);
   const prepared = await f.builder.prepareProfile(imported.id, active, imported.configFiles);
   assert.equal(await readFile(path.join(prepared, 'BepInEx/config/Nested/settings.cfg'), 'utf8'), configuration);
+  assert.equal(await readFile(path.join(prepared, 'doorstop_config.ini'), 'utf8'), 'enabled = true', 'The selected loader package supplies its own configuration.');
   const files = await readdir(path.join(prepared, 'BepInEx/plugins'), { recursive: true });
   assert(files.some(file => path.basename(file) === 'Enabled.dll'));
   assert(files.some(file => path.basename(file) === 'Runtime.dll'));
