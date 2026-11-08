@@ -9,7 +9,7 @@ A Windows mod manager for Lethal Company, R.E.P.O., PEAK, and MIMESIS, powered b
 [![Latest release](https://img.shields.io/github/v/release/Ember-Mod-Loader/Ember?style=flat-square&label=latest&color=ff6a00)](https://github.com/Ember-Mod-Loader/Ember/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-20232a?style=flat-square)](LICENSE)
 
-**[Download Ember](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** · [What's new](RELEASE-NOTES.md) · [Report a bug](https://github.com/Ember-Mod-Loader/Ember/issues)
+**[Website](https://embermods.org/)** · **[Download Ember](https://github.com/Ember-Mod-Loader/Ember/releases/latest)** · [What's new](RELEASE-NOTES.md) · [Report a bug](https://github.com/Ember-Mod-Loader/Ember/issues)
 
 </div>
 
