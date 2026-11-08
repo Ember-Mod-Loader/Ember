@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const { on } = require('node:events');
+const { watch } = require('node:fs');
 const { mkdir, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
-const { setTimeout: delay } = require('node:timers/promises');
 const { createDownloadHistory, COMPLETED_RETENTION_MS } = require('../electron/download-history.cjs');
 const { temporaryDirectory } = require('./temp-directory.cjs');
 
@@ -209,12 +210,19 @@ test('progress saves coalesce the latest bytes and concurrent operations stay di
   const contexts = [operation(), operation(), operation()];
   await Promise.all(contexts.map(context => history.start(context)));
   const id = contexts[0].id;
+  const watcher = watch(root);
+  t.after(() => watcher.close());
+  const writes = on(watcher, 'change', { signal: AbortSignal.timeout(10_000) });
   history.plan(id, [mod]);
   history.progress(id, key, { status: 'downloading', received: 15, total: 100 });
   history.progress(id, key, { status: 'downloading', received: 35, total: 100 });
   const initial = JSON.parse(await readFile(file, 'utf8')).records.find(record => record.id === id);
   assert.equal(initial.packages.length, 0);
-  await delay(1100);
+  // The save timer queues an atomic file write. Wait for its committed snapshot
+  // without keeping the destination open while Windows replaces it.
+  for await (const [, filename] of writes) {
+    if (filename === path.basename(file)) break;
+  }
   const saved = JSON.parse(await readFile(file, 'utf8')).records.find(record => record.id === id);
   assert.equal(saved.packages[0].received, 35);
   assert.equal(history.list().length, 3);
