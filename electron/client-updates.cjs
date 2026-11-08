@@ -74,6 +74,7 @@ function createClientUpdates({
   let installing;
   let downloadReady = false;
   let automaticInstallRequested = false;
+  let manualInstallRequested = false;
   const listeners = [];
   let state = {
     version, status: supported ? 'idle' : 'unsupported', latestVersion: null, progress: null, installBlocked: false,
@@ -92,6 +93,7 @@ function createClientUpdates({
   }
   function fail(error) {
     automaticInstallRequested = false;
+    manualInstallRequested = false;
     downloadReady = false;
     return change({ status: 'error', message: updateError(error), installBlocked: false, progress: null });
   }
@@ -106,6 +108,7 @@ function createClientUpdates({
     if (!latestVersion) { fail(new Error('Invalid update version')); return null; }
     if (!isNewerVersion(latestVersion, version)) {
       automaticInstallRequested = false;
+      manualInstallRequested = false;
       downloadReady = false;
       change({ status: 'idle', latestVersion: null, progress: null, installBlocked: false,
         message: 'This cached update is not newer than your installed Ember version. Check for updates again.' });
@@ -128,6 +131,7 @@ function createClientUpdates({
     });
     listen('update-not-available', () => {
       automaticInstallRequested = false;
+      manualInstallRequested = false;
       change({ status: 'up-to-date', latestVersion: null, progress: null, installBlocked: false, message: 'You are using the latest Ember version.' });
     });
     listen('download-progress', progress => {
@@ -142,19 +146,25 @@ function createClientUpdates({
       downloadReady = true;
       change({ status: 'downloaded', latestVersion, progress: null, installBlocked: false,
         message: `Ember ${latestVersion} is ready to install. Restart Ember to finish updating.` });
-      if (automaticInstallRequested) void installUpdate({ automatic: true });
+      if (manualInstallRequested) void installUpdate();
+      else if (automaticInstallRequested) void installUpdate({ automatic: true });
     });
     listen('update-cancelled', () => {
       automaticInstallRequested = false;
+      manualInstallRequested = false;
       downloadReady = false;
       change({ status: 'idle', progress: null, message: 'The client update download was cancelled. You can check again.' });
     });
     listen('error', fail);
   }
 
-  function checkForUpdates({ automatic = false } = {}) {
-    if (disposed || !supported || state.status === 'installing' || downloadReady) return Promise.resolve(getStatus());
-    if (automatic) automaticInstallRequested = true;
+  function checkForUpdates({ automatic = false, installWhenReady = false } = {}) {
+    if (disposed || !supported || state.status === 'installing') return Promise.resolve(getStatus());
+    if (installWhenReady) {
+      manualInstallRequested = true;
+      automaticInstallRequested = false;
+    } else if (automatic && !manualInstallRequested) automaticInstallRequested = true;
+    if (downloadReady) return installWhenReady ? installUpdate() : Promise.resolve(getStatus());
     if (checking) return checking;
     if (state.status === 'available' || state.status === 'downloading') return Promise.resolve(getStatus());
     change({ status: 'checking', latestVersion: null, progress: null, installBlocked: false, message: 'Checking for a newer Ember version…' });
@@ -189,7 +199,9 @@ function createClientUpdates({
       if (disposed || !stillReady()) return getStatus();
       if (safe !== true) {
         return change({ status: 'downloaded', installBlocked: true,
-          message: 'The update is ready. Finish active downloads or profile work and close the game, then choose Install and restart.' });
+          message: manualInstallRequested || automaticInstallRequested
+            ? 'The update is ready. Finish active downloads or profile work and close the game. Ember will restart when ready.'
+            : 'The update is ready. Finish active downloads or profile work and close the game, then choose Install and restart.' });
       }
       if (automatic) {
         let allowed = false;
@@ -206,12 +218,16 @@ function createClientUpdates({
       if (disposed || !stillReady()) { await releaseReservation(); return getStatus(); }
       change({ status: 'installing', installBlocked: false, message: 'Restarting Ember to install the update…' });
       handoffStarted = true;
-      updater.quitAndInstall(automatic, true);
+      // The first argument controls NSIS silent mode, independently of who requested the update.
+      updater.quitAndInstall(true, true);
       return getStatus();
     }).catch(async () => {
       await releaseReservation();
       if (disposed) return getStatus();
-      if (state.status === 'installing') automaticInstallRequested = false;
+      if (state.status === 'installing') {
+        automaticInstallRequested = false;
+        manualInstallRequested = false;
+      }
       return change({ status: 'downloaded', installBlocked: true,
         message: 'The update is ready, but Ember could not restart to install it. Finish active work and try Install and restart again.' });
     });
@@ -221,8 +237,8 @@ function createClientUpdates({
   }
 
   function retryAutomaticInstall() {
-    if (disposed || !automaticInstallRequested || !downloadReady) return Promise.resolve(getStatus());
-    return installUpdate({ automatic: true });
+    if (disposed || (!automaticInstallRequested && !manualInstallRequested) || !downloadReady) return Promise.resolve(getStatus());
+    return installUpdate({ automatic: !manualInstallRequested });
   }
 
   function dispose() {

@@ -113,7 +113,7 @@ test('a failed automatic installer handoff is not retried on the next startup bu
   await second.client.retryAutomaticInstall();
   assert.deepEqual(second.updater.installs, []);
   await second.client.installUpdate();
-  assert.deepEqual(second.updater.installs, [[false, true]]);
+  assert.deepEqual(second.updater.installs, [[true, true]]);
 });
 
 test('busy work does not consume the persistent attempt and a native reservation race can retry', async t => {

@@ -80,7 +80,7 @@ test('manual available update progresses to ready and installs only when explici
   assert.equal(updater.checks, 1);
   await Promise.all([client.installUpdate(), client.installUpdate()]);
   assert.equal(prepared, 1);
-  assert.deepEqual(updater.installs, [[false, true]]);
+  assert.deepEqual(updater.installs, [[true, true]]);
   assert.equal(client.getStatus().status, 'installing');
   assert.equal(events.at(-1).status, 'installing');
 });
@@ -103,6 +103,129 @@ test('startup checks automatically install a downloaded update only after the sa
   assert.deepEqual(updater.installs, [[true, true]]);
 });
 
+test('the manual Update client action downloads and silently restarts without a second install click', async () => {
+  const updater = mockUpdater();
+  const contexts = [];
+  let reservations = 0;
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  const client = createClientUpdates(options(updater, {
+    beforeInstall: context => contexts.push(context),
+    reserveAutomaticInstall: () => { reservations++; return false; },
+  }));
+  await client.checkForUpdates({ installWhenReady: true });
+  assert.deepEqual(updater.installs, []);
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(client.getStatus().status, 'installing');
+  assert.deepEqual(updater.installs, [[true, true]]);
+  assert.deepEqual(contexts, [{ automatic: false, fromVersion: '0.5.0', toVersion: '0.5.1' }]);
+  assert.equal(reservations, 0, 'An explicit manual request does not consume or require startup restart reservations.');
+});
+
+test('manual updates wait for active work to finish and retry silently through the existing timer hook', async () => {
+  const updater = mockUpdater();
+  let safe = false;
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  const client = createClientUpdates(options(updater, { canInstall: () => safe }));
+  await client.checkForUpdates({ installWhenReady: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(client.getStatus().installBlocked, true);
+  assert.match(client.getStatus().message, /restart when ready/);
+  assert.deepEqual(updater.installs, []);
+  safe = true;
+  await Promise.all([client.retryAutomaticInstall(), client.retryAutomaticInstall()]);
+  assert.deepEqual(updater.installs, [[true, true]]);
+});
+
+test('manual Update client installs a previously downloaded update without another network check', async () => {
+  const updater = mockUpdater();
+  const client = createClientUpdates(options(updater));
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await Promise.all([client.checkForUpdates({ installWhenReady: true }), client.checkForUpdates({ installWhenReady: true })]);
+  assert.equal(updater.checks, 0);
+  assert.deepEqual(updater.installs, [[true, true]]);
+});
+
+test('manual update intent can join an in-progress download and retry a suppressed startup update', async () => {
+  const updater = mockUpdater();
+  let reservations = 0;
+  updater.checkForUpdates = async () => { updater.checks++; updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  const client = createClientUpdates(options(updater, { reserveAutomaticInstall: () => { reservations++; return false; } }));
+  await client.checkForUpdates({ automatic: true });
+  await client.checkForUpdates({ installWhenReady: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(updater.checks, 1, 'The manual action joins the existing download without another metadata request.');
+  assert.equal(reservations, 0);
+  assert.deepEqual(updater.installs, [[true, true]]);
+
+  const second = mockUpdater();
+  second.checkForUpdates = async () => { second.emit('update-available', { version: '0.5.1' }); return {}; };
+  const paused = createClientUpdates(options(second, { reserveAutomaticInstall: () => false }));
+  await paused.checkForUpdates({ automatic: true });
+  second.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(paused.getStatus().installBlocked, true);
+  await paused.checkForUpdates({ installWhenReady: true });
+  assert.deepEqual(second.installs, [[true, true]]);
+});
+
+test('cancelled, failed, and no-update checks cannot leave a manual restart intent armed', async () => {
+  for (const terminal of ['update-cancelled', 'error', 'update-not-available']) {
+    const updater = mockUpdater();
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+    const client = createClientUpdates(options(updater));
+    await client.checkForUpdates({ installWhenReady: true });
+    updater.emit(terminal, new Error('network connection failed'));
+    updater.emit('update-downloaded', { version: '0.5.1' });
+    await tick();
+    await client.retryAutomaticInstall();
+    assert.deepEqual(updater.installs, [], terminal);
+    assert.equal(client.getStatus().status, 'downloaded');
+    client.dispose();
+  }
+});
+
+test('failed manual installer handoffs stop background retries while another explicit update click can retry', async () => {
+  const updater = mockUpdater();
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  let attempts = 0;
+  updater.quitAndInstall = () => { attempts++; throw new Error('Native installer failed'); };
+  const client = createClientUpdates(options(updater));
+  await client.checkForUpdates({ installWhenReady: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.equal(attempts, 1);
+  assert.equal(client.getStatus().status, 'downloaded');
+  await client.retryAutomaticInstall();
+  assert.equal(attempts, 1);
+  updater.quitAndInstall = (...args) => updater.installs.push(args);
+  await client.checkForUpdates({ installWhenReady: true });
+  assert.deepEqual(updater.installs, [[true, true]]);
+});
+
+test('the installed NSIS adapter receives silent and force-run flags for the manual update flow', async () => {
+  const { NsisUpdater } = require('electron-updater/out/NsisUpdater');
+  const updater = mockUpdater();
+  const spawned = [];
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.1' }); return {}; };
+  const native = {
+    installerPath: 'C:\\test-only\\Ember-Setup.exe',
+    installDirectory: 'C:\\test-only\\Ember',
+    downloadedUpdateHelper: null,
+    spawnLog: async (file, args) => { spawned.push({ file, args }); },
+    dispatchError: error => assert.fail(error.message),
+  };
+  updater.quitAndInstall = (isSilent, isForceRunAfter) => NsisUpdater.prototype.doInstall.call(native, { isSilent, isForceRunAfter, isAdminRightsRequired: false });
+  const client = createClientUpdates(options(updater));
+  await client.checkForUpdates({ installWhenReady: true });
+  updater.emit('update-downloaded', { version: '0.5.1' });
+  await tick();
+  assert.deepEqual(spawned, [{ file: native.installerPath, args: ['--updated', '/S', '--force-run', '/D=C:\\test-only\\Ember'] }]);
+  assert.equal(client.getStatus().status, 'installing');
+});
+
 test('busy or running-game guards preserve the ready update and allow a later safe retry', async () => {
   for (const denied of [() => false, () => undefined, () => { throw new Error('Game is running'); }]) {
     const updater = mockUpdater();
@@ -122,7 +245,7 @@ test('busy or running-game guards preserve the ready update and allow a later sa
     guard = () => true;
     await client.installUpdate();
     assert.equal(prepared, 1);
-    assert.deepEqual(updater.installs, [[false, true]]);
+    assert.deepEqual(updater.installs, [[true, true]]);
   }
 });
 
@@ -174,7 +297,7 @@ test('startup retry survives a reservation race but stops automatically retrying
   assert.deepEqual(updater.installs, ['attempt']);
   updater.quitAndInstall = (...args) => updater.installs.push(args);
   await client.installUpdate();
-  assert.deepEqual(updater.installs, ['attempt', [false, true]]);
+  assert.deepEqual(updater.installs, ['attempt', [true, true]]);
 });
 
 test('missing first release and network failures are retryable and never claim up-to-date', async () => {
@@ -310,7 +433,7 @@ test('automatic reservation failures stop background retries while explicit manu
     assert.equal(reservations, 1);
     assert.deepEqual(updater.installs, []);
     await client.installUpdate();
-    assert.deepEqual(updater.installs, [[false, true]]);
+    assert.deepEqual(updater.installs, [[true, true]]);
     assert.equal(reservations, 1);
     assert.deepEqual(contexts, [{ automatic: false, fromVersion: '0.5.0', toVersion: '0.5.1' }]);
   }

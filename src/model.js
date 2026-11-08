@@ -1,4 +1,5 @@
 import { GAMES, getCatalog, getGame, getPackage } from "./catalog.js";
+import { REWARD_WALLPAPERS, readRewardCode, readUnlockedRewards } from "./rewards.js";
 
 const STORAGE_KEY = "modrelay:workspace:v1";
 const LIVE_STORAGE_KEY = "modrelay:thunderstore:v1";
@@ -11,6 +12,7 @@ export const WALLPAPERS = [
   { id: "obsidian", name: "Obsidian", file: "./art/ember-obsidian.png" },
   { id: "crimson-dunes", name: "Crimson Dunes", file: "./art/ember-crimson-dunes.png" },
   { id: "solar-drift", name: "Solar Drift", file: "./art/ember-solar-drift.png" },
+  ...REWARD_WALLPAPERS,
 ];
 const DEFAULT_SETTINGS = { launchMode: "modded", confirmRemoval: true, compactMode: false, wallpaper: "main" };
 export const MAX_CONFIG_LENGTH = 65536;
@@ -46,6 +48,7 @@ function initialState(live) {
     favorites: [],
     favoritePackages: {},
     settings: { ...DEFAULT_SETTINGS },
+    unlockedRewards: [],
     activity: [],
   };
 }
@@ -65,6 +68,11 @@ function isSetting(key, value) {
   if (!Object.hasOwn(DEFAULT_SETTINGS, key)) return false;
   if (key === "wallpaper") return WALLPAPERS.some(wallpaper => wallpaper.id === value);
   return key === "launchMode" ? isLaunchMode(value) : typeof value === "boolean";
+}
+
+function wallpaperAvailable(id, unlockedRewards) {
+  const wallpaper = WALLPAPERS.find(item => item.id === id);
+  return wallpaper && (!wallpaper.rewardId || unlockedRewards.includes(wallpaper.rewardId));
 }
 
 function isNewer(current, latest) {
@@ -249,7 +257,9 @@ function loadState(storage, live) {
       const gameProfiles = profiles.filter(profile => profile.gameId === id);
       return [id, gameProfiles.find(profile => profile.id === saved.activeProfileIds?.[id])?.id ?? gameProfiles[0].id];
     }));
-    const savedSettings = Object.entries(saved.settings ?? {}).filter(([key, value]) => isSetting(key, value));
+    const unlockedRewards = readUnlockedRewards(saved.unlockedRewards);
+    const savedSettings = Object.entries(saved.settings ?? {}).filter(([key, value]) => isSetting(key, value) &&
+      (key !== "wallpaper" || wallpaperAvailable(value, unlockedRewards)));
     const favoritePackages = {};
     if (live && Array.isArray(saved.favorites)) {
       for (const id of saved.favorites) {
@@ -268,6 +278,7 @@ function loadState(storage, live) {
       favorites: live ? Object.keys(favoritePackages) : Array.isArray(saved.favorites) ? [...new Set(saved.favorites.filter(getPackage))] : [],
       favoritePackages,
       settings: { ...DEFAULT_SETTINGS, ...Object.fromEntries(savedSettings) },
+      unlockedRewards,
       activity: Array.isArray(saved.activity) ? saved.activity.filter(entry => entry &&
         typeof entry.id === "string" && typeof entry.at === "string" && typeof entry.type === "string" &&
         Number.isFinite(Date.parse(entry.at)) && typeof entry.message === "string" &&
@@ -453,6 +464,7 @@ export function createManager(storage = globalThis.localStorage, { live = false 
     get catalog() { return getCatalog(state.activeGameId); },
     get installed() { return installed(); },
     get updates() { return installed().filter(entry => entry.hasUpdate); },
+    get wallpapers() { return structuredClone(WALLPAPERS.filter(wallpaper => !wallpaper.rewardId || state.unlockedRewards.includes(wallpaper.rewardId))); },
     packageById,
     registerPackages(list) {
       for (const raw of list) {
@@ -698,7 +710,20 @@ export function createManager(storage = globalThis.localStorage, { live = false 
 
     setSetting(key, value) {
       if (!isSetting(key, value)) throw new Error("That setting is not supported.");
+      if (key === "wallpaper") {
+        if (!wallpaperAvailable(value, state.unlockedRewards)) throw new Error("Unlock this wallpaper with a code first.");
+      }
       return commit(draft => { draft.settings[key] = value; });
+    },
+
+    redeemCode(value) {
+      const reward = readRewardCode(value);
+      const wallpaper = WALLPAPERS.find(item => item.id === reward.wallpaperId);
+      if (state.unlockedRewards.includes(reward.id)) return { status: "already-unlocked", wallpaper: structuredClone(wallpaper) };
+      return commit(draft => {
+        draft.unlockedRewards.push(reward.id);
+        return { status: "unlocked", wallpaper: structuredClone(wallpaper) };
+      });
     },
 
     recordLaunch(profileId, mode) {

@@ -602,6 +602,7 @@ function settingsPage() {
     ${nativeLaunchSupported() ? gameSetupPanel() : ''}
     <section class="settings-panel"><h2>Preferences</h2>
       <div class="settings-row"><div><strong>Wallpaper</strong><p>${esc(WALLPAPERS.find(item => item.id === settings.wallpaper)?.name)} · Choose Ember’s background.</p></div>${button('Wallpapers', null, 'wallpapers')}</div>
+      <div class="settings-row"><div><strong>Codes</strong><p>Unlock wallpapers with an Ember code.</p></div>${button('Codes', null, 'codes')}</div>
       ${nativeLaunchSupported() || !manager.live ? `<div class="settings-row"><div><label for="launch-mode">Default launch mode</label><p>Choose the primary launch button in the sidebar.</p></div><select id="launch-mode" class="field" data-setting="launchMode"><option value="modded"${settings.launchMode === 'modded' ? ' selected' : ''}>Modded</option><option value="vanilla"${settings.launchMode === 'vanilla' ? ' selected' : ''}>Vanilla</option></select></div>` : ''}
       ${settingToggle('confirmRemoval', 'Confirm mod removal', 'Confirm removals from the active profile. Dependency warnings always appear.')}
       ${settingToggle('compactMode', 'Compact mod cards', 'Fit more packages into the catalog by hiding card descriptions.')}
@@ -660,14 +661,13 @@ function renderDialog() {
         <div class="dialog-form"><p class="launch-message">${esc(status?.message || 'Online client updates are not available yet.')}</p>
           ${installing ? '<p class="client-update-note">Ember will restart automatically to finish updating.</p>' : ''}
           ${status?.progress ? `<progress class="download-progress" max="100" value="${status.progress.percent}" aria-label="Client update download"></progress><p class="client-update-note">${Math.round(status.progress.percent)}% downloaded</p>` : ''}
-          <p class="client-update-note">Installed Windows clients check GitHub Releases at startup. Updates install automatically when no downloads, profile work, or game session is active. Portable builds are updated manually.</p>
         </div>
         <div class="dialog-footer">${installing ? '<p role="status">Restarting Ember…</p>' : button('View releases', 'diagonal', 'client-release-page') + (status?.status === 'downloaded' ? button('Install and restart', 'refresh', 'client-install', { style: 'primary' }) : status?.status === 'error' ? button('Try again', 'refresh', 'client-update', { style: 'primary' }) : button('Done', 'check', 'close-dialog', { style: 'primary' }))}</div>`;
       break;
     }
     case 'wallpapers':
       dialog.innerHTML = `${dialogHeader('Wallpapers', 'Choose the background for Ember.')}
-        <div class="wallpaper-grid">${WALLPAPERS.map(wallpaper => {
+        <div class="wallpaper-grid">${manager.wallpapers.map(wallpaper => {
           const selected = manager.state.settings.wallpaper === wallpaper.id;
           return `<button type="button" class="wallpaper-choice" data-action="select-wallpaper" data-id="${wallpaper.id}" aria-pressed="${selected}">
             <img src="${asset(wallpaper.file)}" alt="">
@@ -676,6 +676,21 @@ function renderDialog() {
         }).join('')}</div>
         <div class="dialog-footer">${button('Done', 'check', 'close-dialog', { style: 'primary' })}</div>`;
       break;
+    case 'codes':
+      dialog.innerHTML = `${dialogHeader('Codes', 'Enter a code to unlock a wallpaper.')}
+        <form id="dialog-form" class="dialog-form">
+          <label for="reward-code">Code<input id="reward-code" class="field reward-code" name="rewardCode" placeholder="Enter your code" maxlength="64" autocomplete="off" autocapitalize="characters" spellcheck="false" required data-initial-focus></label>
+          <p class="form-error" role="alert" hidden></p>
+          <div class="dialog-footer">${button('Cancel', null, 'close-dialog')}<button type="submit" class="button primary">Redeem code</button></div>
+        </form>`;
+      break;
+    case 'code-reward': {
+      const { wallpaper, status } = id;
+      dialog.innerHTML = `${dialogHeader(status === 'already-unlocked' ? 'Already unlocked' : 'Wallpaper unlocked')}
+        <div class="reward-preview"><img src="${asset(wallpaper.file)}" alt="${esc(wallpaper.name)} wallpaper preview"><h3>${esc(wallpaper.name)}</h3></div>
+        <div class="dialog-footer">${button('Done', null, 'close-dialog')}${button('Use wallpaper', 'check', 'use-reward-wallpaper', { id: wallpaper.id, style: 'primary' })}</div>`;
+      break;
+    }
     case 'mod': {
       const mod = manager.packageById(id);
       const installed = manager.installed.find(item => item.id === id);
@@ -1207,11 +1222,12 @@ async function checkClientUpdate() {
   const trigger = app.querySelector('[data-action="client-update"]');
   if (trigger) trigger.disabled = true;
   try {
-    ui.clientUpdate = desktop?.checkClientUpdate ? await desktop.checkClientUpdate() : {
+    const status = desktop?.checkClientUpdate ? await desktop.checkClientUpdate() : {
       version: CLIENT_VERSION, status: 'unsupported', message: 'Client updates are available in the installed Windows app.',
     };
+    if (ui.clientUpdate?.status !== 'installing') ui.clientUpdate = status;
   } catch (error) {
-    ui.clientUpdate = { version: CLIENT_VERSION, status: 'error', message: errorMessage(error) };
+    if (ui.clientUpdate?.status !== 'installing') ui.clientUpdate = { version: CLIENT_VERSION, status: 'error', message: errorMessage(error) };
   } finally {
     ui.checkingClientUpdate = false;
     if (ui.dialog?.type === 'client-update' && ui.dialog.id === request) renderDialog();
@@ -1230,6 +1246,13 @@ async function handleAction(action, id) {
     case 'games': openDialog('games'); break;
     case 'about': openDialog('about'); break;
     case 'wallpapers': openDialog('wallpapers'); break;
+    case 'codes': openDialog('codes'); break;
+    case 'use-reward-wallpaper':
+      manager.setSetting('wallpaper', id);
+      closeDialog();
+      render();
+      notify('Wallpaper applied.');
+      break;
     case 'client-update': await checkClientUpdate(); break;
     case 'client-release-page': await desktop?.openClientReleasePage?.(); break;
     case 'client-install': updateClientState(await desktop.installClientUpdate()); break;
@@ -1527,6 +1550,11 @@ document.addEventListener('submit', async event => {
   const data = new FormData(form);
   try {
     const { type, id } = ui.dialog;
+    if (type === 'codes') {
+      const reward = manager.redeemCode(data.get('rewardCode'));
+      openDialog('code-reward', reward);
+      return;
+    }
     const name = data.get('profileName');
     if (type === 'profile-create') manager.createProfile(name);
     if (type === 'profile-rename') manager.renameProfile(id, name);

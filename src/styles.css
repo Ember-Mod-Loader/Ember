@@ -30,6 +30,7 @@ html[data-wallpaper="aurora"] { --wallpaper-image: url("/art/ember-aurora.png");
 html[data-wallpaper="obsidian"] { --wallpaper-image: url("/art/ember-obsidian.png"); }
 html[data-wallpaper="crimson-dunes"] { --wallpaper-image: url("/art/ember-crimson-dunes.png"); }
 html[data-wallpaper="solar-drift"] { --wallpaper-image: url("/art/ember-solar-drift.png"); }
+html[data-wallpaper="first-flame"] { --wallpaper-image: url("/art/ember-first-flame.svg"); }
 
 *, *::before, *::after { box-sizing: border-box; }
 * { scrollbar-width: none; }
@@ -385,6 +386,11 @@ dialog::backdrop { background: #08080bcc; }
 .share-form .form-error { margin-top: 10px; color: #ffb0a0; }
 .share-code { width: 100%; font: 500 12px/1.6 Consolas, monospace; letter-spacing: 0; }
 .form-error { color: #ffb0a0; font-size: 11px; }
+.reward-code { text-transform: uppercase; letter-spacing: .08em; }
+.reward-code::placeholder { text-transform: none; letter-spacing: normal; }
+.reward-preview { padding: 17px; }
+.reward-preview img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 10px; }
+.reward-preview h3 { margin: 13px 0 0; font-size: 18px; }
 .detail-body { flex: 1; overflow: auto; }
 .detail-package { display: flex; align-items: center; gap: 12px; margin: 6px 0 14px; }
 .detail-art { width: 65px; height: 65px; }

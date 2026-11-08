@@ -39,6 +39,7 @@ Ember finds supported games in your Steam libraries. If a game isn't found, choo
 - Keep separate profiles and share mod lists with an Ember profile code.
 - Follow downloads and launch your game with mods or in vanilla mode.
 - Choose a wallpaper that stays selected across profiles and games.
+- Redeem wallpaper codes in **Settings → Codes**. Unlocks stay on your device across profiles and games.
 
 No account is required. Profiles, preferences, and downloaded packages are stored on your device. The online indicator shows active app sessions; see [Privacy](PRIVACY.md) for details.
 
@@ -96,7 +97,7 @@ The **Downloads** tab shows progress and the destination profile. Completed entr
 
 The installed app checks for updates on its loading screen, shows download progress, and reopens after installation. A running game or active profile work delays installation. Failed or stalled checks let you continue into the workspace.
 
-You can also check **Settings → Update client**. If an automatic restart couldn't finish, use **Install and restart** to try again. Portable builds are updated manually from the release page.
+Choose **Settings → Update client** to download an available update and let Ember install silently and reopen when active work has finished. If a restart couldn't finish, use **Install and restart** to try again. Portable builds are updated manually from the release page.
 
 If you're upgrading from 0.4.x, install a current release once to get automatic updates. Your profiles and preferences are preserved.
 

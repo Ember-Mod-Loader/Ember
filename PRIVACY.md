@@ -1,8 +1,10 @@
 # Privacy
 
-Applies to Ember 0.6.1.
+Applies to Ember 0.6.2.
 
 ## On your device
+
+Wallpaper code unlocks are stored locally and stay available across profiles and games. Redeeming these codes does not contact a server, and profile sharing does not transfer unlocks.
 
 Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account system, behavioral tracking, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company, R.E.P.O., PEAK, and MIMESIS. Mods that place files in the game folder have their replaced files backed up locally; edited mod files are kept as recovery copies during restoration.
 
