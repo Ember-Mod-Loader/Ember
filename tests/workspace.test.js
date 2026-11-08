@@ -595,7 +595,7 @@ test("existing workspaces gain a MIMESIS default profile without resetting other
   const storage = memoryStorage();
   const manager = createManager(storage, { live: true });
   manager.createProfile("Existing friends");
-  manager.setSetting("wallpaper", "aurora");
+  manager.setSetting("wallpaper", "obsidian");
   const saved = JSON.parse(storage.getItem("modrelay:thunderstore:v1"));
   saved.profiles = saved.profiles.filter(profile => profile.gameId !== "mimesis");
   delete saved.activeProfileIds.mimesis;
@@ -603,10 +603,10 @@ test("existing workspaces gain a MIMESIS default profile without resetting other
   storage.setItem("modrelay:thunderstore:v1", JSON.stringify(saved));
   const reloaded = createManager(storage, { live: true });
   assert.equal(reloaded.profile.name, "Existing friends");
-  assert.equal(reloaded.state.settings.wallpaper, "aurora");
+  assert.equal(reloaded.state.settings.wallpaper, "obsidian");
   reloaded.switchGame("mimesis");
   assert.equal(reloaded.profile.id, "mimesis-default");
   assert.deepEqual(reloaded.profile.userDataFiles, {});
-  assert.equal(reloaded.state.settings.wallpaper, "aurora");
+  assert.equal(reloaded.state.settings.wallpaper, "obsidian");
 });
 

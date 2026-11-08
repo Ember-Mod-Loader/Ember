@@ -404,11 +404,11 @@ function favoriteMods() {
 
 function libraryPage() {
   const { installed, updates, profile } = manager;
-  const actions = manager.live
+  const actions = button('Share mods', 'upload', 'export', { id: profile.id }) + (manager.live
     ? button('Open downloads', 'file', 'open-downloads') +
       (updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary', disabled: ui.downloading }) : '') +
       (installed.length ? button(ui.checkingUpdates ? 'Checking…' : 'Check for updates', 'refresh', 'check-updates', { disabled: ui.checkingUpdates || ui.downloading }) : '')
-    : updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary' }) : button('Browse mods', 'compass', 'navigate', { id: 'browse' });
+    : updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary' }) : button('Browse mods', 'compass', 'navigate', { id: 'browse' }));
   return `${heading('YOUR COLLECTION', pageLabel('library'), '', actions)}
     <div class="stats-grid">
       ${stat('layers', 'Installed', installed.length)}

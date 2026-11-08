@@ -26,7 +26,6 @@
   --wallpaper-image: url("/art/ember-landscape.png");
 }
 html[data-wallpaper="ember-flow"] { --wallpaper-image: url("/art/ember-backdrop.png"); }
-html[data-wallpaper="aurora"] { --wallpaper-image: url("/art/ember-aurora.png"); }
 html[data-wallpaper="obsidian"] { --wallpaper-image: url("/art/ember-obsidian.png"); }
 html[data-wallpaper="crimson-dunes"] { --wallpaper-image: url("/art/ember-crimson-dunes.png"); }
 html[data-wallpaper="solar-drift"] { --wallpaper-image: url("/art/ember-solar-drift.png"); }

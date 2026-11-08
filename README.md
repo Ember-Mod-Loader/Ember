@@ -36,10 +36,10 @@ Ember finds supported games in your Steam libraries. If a game isn't found, choo
 - See package tags and deprecated labels, with an option to include deprecated mods in searches.
 - Install mods and their required packages together.
 - Enable, disable, update, and remove individual mods, with prompts for affected dependencies.
-- Keep separate profiles and share mod lists with an Ember profile code.
+- Keep separate profiles and share mod lists from Installed mods or Profiles with an Ember profile code.
 - Follow downloads and launch your game with mods or in vanilla mode.
 - Choose a wallpaper that stays selected across profiles and games.
-- Redeem wallpaper codes in **Settings → Codes**. Unlocks stay on your device across profiles and games.
+- Redeem Ember codes in **Settings → Codes**.
 
 No account is required. Profiles, preferences, and downloaded packages are stored on your device. The online indicator shows active app sessions; see [Privacy](PRIVACY.md) for details.
 

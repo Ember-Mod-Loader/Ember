@@ -8,7 +8,7 @@ const CODE_PREFIX = "MR1-";
 export const WALLPAPERS = [
   { id: "main", name: "Main", file: "./art/ember-landscape.png" },
   { id: "ember-flow", name: "Ember Flow", file: "./art/ember-backdrop.png" },
-  { id: "aurora", name: "Aurora", file: "./art/ember-aurora.png" },
+  { id: "first-flame", name: "First Flame", file: "./art/ember-first-flame.svg" },
   { id: "obsidian", name: "Obsidian", file: "./art/ember-obsidian.png" },
   { id: "crimson-dunes", name: "Crimson Dunes", file: "./art/ember-crimson-dunes.png" },
   { id: "solar-drift", name: "Solar Drift", file: "./art/ember-solar-drift.png" },
@@ -719,7 +719,7 @@ export function createManager(storage = globalThis.localStorage, { live = false 
     redeemCode(value) {
       const reward = readRewardCode(value);
       const wallpaper = WALLPAPERS.find(item => item.id === reward.wallpaperId);
-      if (state.unlockedRewards.includes(reward.id)) return { status: "already-unlocked", wallpaper: structuredClone(wallpaper) };
+      if (!wallpaper.rewardId || state.unlockedRewards.includes(reward.id)) return { status: "already-unlocked", wallpaper: structuredClone(wallpaper) };
       return commit(draft => {
         draft.unlockedRewards.push(reward.id);
         return { status: "unlocked", wallpaper: structuredClone(wallpaper) };

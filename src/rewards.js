@@ -1,11 +1,9 @@
-// Add future wallpaper codes here. Rewards are local cosmetic unlocks.
+// Keep published codes valid when their rewards become available to everyone.
 const CODES = Object.freeze({
   FIRSTFLAME: Object.freeze({ id: "first-flame", wallpaperId: "first-flame" }),
 });
 
-export const REWARD_WALLPAPERS = Object.freeze([
-  Object.freeze({ id: "first-flame", name: "First Flame", file: "./art/ember-first-flame.svg", rewardId: "first-flame" }),
-]);
+export const REWARD_WALLPAPERS = Object.freeze([]);
 
 export function readRewardCode(value) {
   if (typeof value !== "string" || value.length > 64) throw new Error("Enter a code up to 64 characters.");

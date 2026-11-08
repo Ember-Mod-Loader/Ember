@@ -1,6 +1,8 @@
-# Ember 0.6.3
+# Ember 0.6.4
 
-- Removed the wallpaper-specific descriptions from Settings → Codes and the code entry dialog.
+- First Flame is now available to everyone in Settings → Wallpapers without a code.
+- Removed Aurora. Anyone using it switches to Main; other wallpaper choices are preserved.
+- Added Share mods to Installed mods, so you can create a code for the active profile directly from its mod list.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
