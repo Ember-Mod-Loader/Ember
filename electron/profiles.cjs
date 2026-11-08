@@ -4,13 +4,13 @@ const { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFil
 const path = require('node:path');
 const { extractArchive } = require('./archive.cjs');
 const { normalizeConfigFiles } = require('./config-files.cjs');
+const { chooseLoader } = require('./loaders.cjs');
+const { createPackageMapper } = require('./package-layout.cjs');
 
 const GAME = 'lethal-company';
-const GAMES = new Map([['lethal-company', 'Lethal Company'], ['repo', 'R.E.P.O.'], ['peak', 'PEAK']]);
+const GAMES = new Map([['lethal-company', 'Lethal Company'], ['repo', 'R.E.P.O.'], ['peak', 'PEAK'], ['mimesis', 'MIMESIS']]);
 const PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll';
-const LOADER_FILES = new Set(['winhttp.dll', 'doorstop_config.ini', '.doorstop_version']);
-const PACKAGE_META = /^(?:manifest\.json|icon\.png|readme(?:\..*)?|changelog(?:\..*)?|license(?:\..*)?)$/i;
-const FORMAT = 1;
+const FORMAT = 2;
 
 function profileDirectory(root, id, gameId) {
   if (typeof id !== 'string' || (id !== `${gameId}-default` && !/^[0-9a-f-]{36}$/i.test(id))) {
@@ -39,36 +39,28 @@ async function copyTree(source, target, overwrite = false) {
   }
 }
 
-function loaderEntry(entry, packName) {
-  const prefix = `${packName}/`;
-  const file = entry.toLowerCase().startsWith(prefix.toLowerCase()) ? entry.slice(prefix.length) : entry;
-  const known = /^(bepinex)\/(core|config)\/(.+)$/i.exec(file);
-  if (known) return `BepInEx/${known[2].toLowerCase()}/${known[3]}`;
-  return LOADER_FILES.has(file.toLowerCase()) ? file.toLowerCase() : null;
-}
-
-function modEntry(entry, directory) {
-  if (PACKAGE_META.test(entry)) return null;
-  const sharedCore = /^bepinex\/core\/(.+)$/i.exec(entry);
-  if (sharedCore) return `BepInEx/core/${sharedCore[1]}`;
-  const known = /^(?:bepinex\/)?(plugins|patchers|config)\/(.+)$/i.exec(entry);
-  if (known) {
-    const kind = known[1].toLowerCase();
-    return kind === 'config' ? `BepInEx/config/${known[2]}` : `BepInEx/${kind}/${directory}/${known[2]}`;
+async function hasLoader(directory, kind) {
+  const required = kind === 'melonloader'
+    ? ['MelonLoader/net35/MelonLoader.dll', 'MelonLoader/net6/MelonLoader.dll']
+    : [PRELOADER, 'winhttp.dll', 'doorstop_config.ini'];
+  for (const file of required) {
+    if (!(await fileInfo(path.join(directory, file)))?.isFile()) return false;
   }
-  if (/^bepinex\//i.test(entry) || LOADER_FILES.has(entry.toLowerCase())) {
-    throw new Error('This package uses a game layout Ember cannot deploy.');
+  if (kind === 'melonloader') {
+    const proxies = await Promise.all(['version.dll', 'winhttp.dll'].map(async file => (await fileInfo(path.join(directory, file)))?.isFile()));
+    if (proxies.filter(Boolean).length !== 1) return false;
   }
-  return `BepInEx/plugins/${directory}/${entry}`;
+  return true;
 }
 
 function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
   if (!GAMES.has(gameId)) throw new Error('Choose a supported game for profile preparation.');
   const active = new Map();
 
-  async function prepareProfile(id, entries, importedConfigFiles = {}) {
+  async function prepareProfile(id, entries, importedConfigFiles = {}, importedUserDataFiles = {}) {
     const base = profileDirectory(root, id, gameId);
     const configFiles = normalizeConfigFiles(importedConfigFiles);
+    const userDataFiles = normalizeConfigFiles(importedUserDataFiles);
     if (!Array.isArray(entries) || entries.length > 200) throw new Error('Choose up to 200 enabled packages for this profile.');
     const refs = entries.map(entry => {
       if (typeof entry?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(entry.namespace) ||
@@ -78,13 +70,12 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
       }
       return { namespace: entry.namespace, name: entry.name, version: entry.version };
     }).sort((a, b) => a.namespace.localeCompare(b.namespace) || a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
-    const loaderName = gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
-    const loader = refs.find(ref => ref.namespace === 'BepInEx' && ref.name === loaderName);
-    if (!loader) throw new Error(`Download and enable ${loaderName} in this ${GAMES.get(gameId)} profile.`);
+    const loader = chooseLoader(refs, gameId);
     const key = createHash('sha256').update(JSON.stringify({ format: FORMAT, refs,
-      ...(Object.keys(configFiles).length ? { configFiles } : {}) })).digest('hex');
+      ...(Object.keys(configFiles).length ? { configFiles } : {}),
+      ...(Object.keys(userDataFiles).length ? { userDataFiles } : {}) })).digest('hex');
     if (active.has(base)) throw new Error('This profile is already being prepared.');
-    const operation = build(base, key, loader, refs, configFiles);
+    const operation = build(base, key, loader, refs, configFiles, userDataFiles);
     active.set(base, operation);
     try {
       return await operation;
@@ -93,7 +84,7 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     }
   }
 
-  async function build(base, key, loader, refs, configFiles) {
+  async function build(base, key, loader, refs, configFiles, userDataFiles) {
     const runtime = path.join(base, 'runtime');
     const marker = '.modspindle-profile';
     const current = await fileInfo(runtime);
@@ -102,7 +93,7 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
       if (error.code === 'ENOENT') return '';
       throw error;
     });
-    if (previousKey === key && (await fileInfo(path.join(runtime, PRELOADER)))?.isFile()) return runtime;
+    if (previousKey === key && await hasLoader(runtime, loader.kind)) return runtime;
 
     await mkdir(base, { recursive: true });
     const stage = await mkdtemp(path.join(base, 'stage-'));
@@ -110,7 +101,7 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     const backup = path.join(base, `backup-${randomUUID()}`);
     try {
       await mkdir(next);
-      const packageList = [loader, ...refs.filter(ref => ref !== loader &&
+      const packageList = [loader.ref, ...refs.filter(ref => ref !== loader.ref &&
         !(gameId === 'peak' && ref.namespace === 'BepInEx' && ref.name === 'BepInExPack'))];
       for (const [index, ref] of packageList.entries()) {
         const { filename } = await cache.downloadPackage({ gameId, ...ref });
@@ -118,14 +109,13 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
         const part = path.join(stage, `package-${index}`);
         const identity = `${ref.namespace}/${ref.name}`;
         const suffix = createHash('sha256').update(identity).digest('hex').slice(0, 12);
-        const folder = `${ref.namespace.slice(0, 20)}-${ref.name.slice(0, 40)}-${suffix}`;
+        const folder = loader.kind === 'melonloader' ? `${ref.namespace}-${ref.name}` : `${ref.namespace.slice(0, 20)}-${ref.name.slice(0, 40)}-${suffix}`;
         await mkdir(part);
         try {
-          await extractArchive(archive, part, ref === loader ? entry => loaderEntry(entry, loader.name) : entry => modEntry(entry, folder));
-          if (ref === loader && (!(await fileInfo(path.join(part, PRELOADER)))?.isFile() ||
-              !(await fileInfo(path.join(part, 'winhttp.dll')))?.isFile() ||
-              !(await fileInfo(path.join(part, 'doorstop_config.ini')))?.isFile())) {
-            throw new Error('BepInExPack is missing its Windows loader files.');
+          const mapper = await createPackageMapper(archive, { directory: folder, gameId, loader, isLoader: ref === loader.ref });
+          await extractArchive(archive, part, mapper);
+          if (ref === loader.ref && !await hasLoader(part, loader.kind)) {
+            throw new Error(`${loader.name} is missing its Windows loader files.`);
           }
           await copyTree(part, next);
           await rm(part, { recursive: true, force: true });
@@ -138,7 +128,14 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, content, { encoding: 'utf8', mode: 0o600 });
       }
+      for (const [relative, content] of Object.entries(userDataFiles)) {
+        const target = path.join(next, 'UserData', ...relative.split('/'));
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, content, { encoding: 'utf8', mode: 0o600 });
+      }
       if (current) await copyTree(path.join(runtime, 'BepInEx', 'config'), path.join(next, 'BepInEx', 'config'), true);
+      if (current) await copyTree(path.join(runtime, 'UserData'), path.join(next, 'UserData'), true);
+      await writeFile(path.join(next, '.ember-loader.json'), JSON.stringify({ kind: loader.kind, name: loader.name, version: loader.ref.version }), { flag: 'wx' });
       await writeFile(path.join(next, marker), key, { flag: 'wx' });
       if (current) await rename(runtime, backup);
       try {

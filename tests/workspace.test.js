@@ -552,3 +552,61 @@ test("invalid imported configuration files cannot create a partial profile", () 
   }
 });
 
+test("MIMESIS UserData configurations survive imports, reloads, clones, game changes and sharing", () => {
+  const source = createManager(memoryStorage(), { live: true });
+  source.switchGame("mimesis");
+  assert.equal(source.game.name, "MIMESIS");
+  const loader = { ...thunderstorePackage("MelonLoader", "0.7.3", [], "mimesis"), namespace: "LavaGang", author: "LavaGang", id: "mimesis/LavaGang/MelonLoader" };
+  source.recordDownloads(source.profile.id, "mimesis", [loader], [loader.id]);
+  const payload = JSON.parse(source.exportProfile().json);
+  payload.userDataFiles = { "MelonPreferences.cfg": "Crew = café ☕", "Nested/settings.json": '{"enabled":true}' };
+  const storage = memoryStorage();
+  const target = createManager(storage, { live: true });
+  const imported = target.importProfile(JSON.stringify(payload), [loader]);
+  assert.equal(imported.gameId, "mimesis");
+  assert.deepEqual(imported.userDataFiles, payload.userDataFiles);
+  assert.deepEqual(createManager(storage, { live: true }).profile.userDataFiles, payload.userDataFiles);
+  const cloned = target.cloneProfile(imported.id, "MIMESIS copy");
+  assert.deepEqual(cloned.userDataFiles, payload.userDataFiles);
+  assert.notEqual(cloned.userDataFiles, imported.userDataFiles);
+  const exported = target.exportProfile(cloned.id);
+  assert.deepEqual(target.readImport(exported.code).userDataFiles, payload.userDataFiles);
+  target.switchGame("repo");
+  assert.deepEqual(target.profile.userDataFiles, {});
+  target.switchGame("mimesis");
+  assert.deepEqual(target.profile.userDataFiles, payload.userDataFiles);
+  delete payload.userDataFiles;
+  assert.deepEqual(target.readImport(JSON.stringify(payload)).userDataFiles, {});
+});
+
+test("invalid UserData paths cannot partially import a MIMESIS profile", () => {
+  const target = createManager(memoryStorage(), { live: true });
+  target.switchGame("mimesis");
+  const payload = JSON.parse(target.exportProfile().json);
+  const before = target.profiles.length;
+  for (const userDataFiles of [null, [], { "../outside.cfg": "x" }, { "executable.dll": "x" },
+    { "NUL.cfg": "x" }, { "test.cfg": "x\0y" }, { "Test.cfg": "x", "test.cfg": "y" }]) {
+    assert.throws(() => target.importProfile(JSON.stringify({ ...payload, userDataFiles })), /configuration|Configuration/);
+    assert.equal(target.profiles.length, before);
+  }
+});
+
+test("existing workspaces gain a MIMESIS default profile without resetting other profiles or wallpaper", () => {
+  const storage = memoryStorage();
+  const manager = createManager(storage, { live: true });
+  manager.createProfile("Existing friends");
+  manager.setSetting("wallpaper", "aurora");
+  const saved = JSON.parse(storage.getItem("modrelay:thunderstore:v1"));
+  saved.profiles = saved.profiles.filter(profile => profile.gameId !== "mimesis");
+  delete saved.activeProfileIds.mimesis;
+  for (const profile of saved.profiles) delete profile.userDataFiles;
+  storage.setItem("modrelay:thunderstore:v1", JSON.stringify(saved));
+  const reloaded = createManager(storage, { live: true });
+  assert.equal(reloaded.profile.name, "Existing friends");
+  assert.equal(reloaded.state.settings.wallpaper, "aurora");
+  reloaded.switchGame("mimesis");
+  assert.equal(reloaded.profile.id, "mimesis-default");
+  assert.deepEqual(reloaded.profile.userDataFiles, {});
+  assert.equal(reloaded.state.settings.wallpaper, "aurora");
+});
+

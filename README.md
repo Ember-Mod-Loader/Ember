@@ -4,7 +4,7 @@
 
 # Ember
 
-A Windows mod manager for Lethal Company, R.E.P.O., and PEAK, powered by Thunderstore.
+A Windows mod manager for Lethal Company, R.E.P.O., PEAK, and MIMESIS, powered by Thunderstore.
 
 [![Latest release](https://img.shields.io/github/v/release/Ember-Mod-Loader/Ember?style=flat-square&label=latest&color=ff6a00)](https://github.com/Ember-Mod-Loader/Ember/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-20232a?style=flat-square)](LICENSE)
@@ -25,8 +25,8 @@ Windows builds are currently unsigned. Checksums are included with each release.
 
 ## Supported games
 
-| <img src="public/art/game-lethal-company.jpg" alt="Lethal Company" width="64"><br>Lethal Company | <img src="public/art/game-repo.jpg" alt="R.E.P.O." width="64"><br>R.E.P.O. | <img src="public/art/game-peak.jpg" alt="PEAK" width="64"><br>PEAK |
-| :---: | :---: | :---: |
+| <img src="public/art/game-lethal-company.jpg" alt="Lethal Company" width="64"><br>Lethal Company | <img src="public/art/game-repo.jpg" alt="R.E.P.O." width="64"><br>R.E.P.O. | <img src="public/art/game-peak.jpg" alt="PEAK" width="64"><br>PEAK | <img src="public/art/game-mimesis.jpg" alt="MIMESIS" width="64"><br>MIMESIS |
+| :---: | :---: | :---: | :---: |
 
 Ember finds supported games in your Steam libraries. If a game isn't found, choose its folder in **Settings**.
 
@@ -55,9 +55,13 @@ Use the arrow beside the launch button to switch between modded and vanilla. You
 
 Close the game before changing its loader or preparing a profile. The setup panel in **Settings** lets you choose the game folder, prepare a profile, or open its folder.
 
-Ember asks before adding the BepInEx Doorstop loader to a clean game installation. It can reuse a compatible loader and remembers your approval unless the loader files change.
+Ember asks before adding a loader to a clean game installation. Compatible existing loaders are reused automatically. The launch button shows **Starting…** while Steam opens the game, then **Running** until it closes.
 
-PEAK uses **BepInExPack_PEAK**; Lethal Company and R.E.P.O. use **BepInExPack**. If custom Steam launch options interfere, check **Steam → Properties → Launch Options** for that game.
+PEAK uses **BepInExPack_PEAK**; Lethal Company and R.E.P.O. use **BepInExPack**. MIMESIS uses **LavaGang's MelonLoader**, version 0.7.0 or newer. Keep mods for different loaders in separate profiles. If custom Steam launch options interfere, check **Steam → Properties → Launch Options** for that game.
+
+Ember handles BepInEx plugins, patchers, configs, core libraries, and MonoMod patches, plus modern MelonLoader mods, plugins, libraries, and UserData. Package wrappers and explicit game-root or game-data files are recognized. Game-root files are backed up before replacement and restored when switching profiles, launching vanilla, or removing Ember's loader. If those files were edited, Ember keeps a recovery copy in the game folder.
+
+Unrecognized loader layouts are reported with the affected path. Unreal-only loaders such as UE4SS aren't compatible with these Unity games. Ember doesn't run package installer scripts or replace game executables.
 
 To remove a loader installed by Ember, choose **Remove loader** in the setup panel before uninstalling the app. Check mod listings for compatibility before installing.
 
@@ -70,7 +74,7 @@ Choose **Profiles → Share profile → Create share code** to send a mod list t
 
 In **Import profile**, choose **Ember** for Ember codes or JSON files, or **Thunderstore / r2modman** for a code shared by either manager. For Thunderstore profiles, select the game the profile was made for. Ember downloads the selected package versions and keeps the enabled and disabled choices.
 
-Supported BepInEx configuration files are imported with the profile and applied when you prepare or launch it. If the archive contains files Ember can't place, it lists them for review before importing the supported files.
+Supported BepInEx configuration files and MelonLoader UserData text files are imported with the profile and applied when you prepare or launch it. If the archive contains files Ember can't place, it lists them for review before importing the supported files.
 
 **Download JSON** saves a local export, including imported configuration templates. Later changes made by the game in its runtime configuration files aren't automatically copied back into exports.
 

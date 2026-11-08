@@ -171,6 +171,29 @@ function packageFor(gameId, ref, dependencies = []) {
     description: '', category: 'Mods', categories: [], downloads: 1, icon: '', url: '' };
 }
 
+test('MIMESIS native codes and Ember share codes retain MelonLoader UserData configuration', async () => {
+  const payload = nativePayload([nativeMod('LavaGang-MelonLoader', '0.7.3')], [
+    { name: 'UserData/MelonPreferences.cfg', content: '[Crew]\nName = café ☕' },
+  ]);
+  const client = createSharingClient({ fetchImpl: async () => new Response(payload), resolvePackage: packageFor });
+  const json = await client.resolveThunderstoreProfile(key, 'mimesis');
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.gameId, 'mimesis');
+  assert.deepEqual(parsed.userDataFiles, { 'MelonPreferences.cfg': '[Crew]\nName = café ☕' });
+  const { createManager } = await import('../src/model.js');
+  const manager = createManager({ getItem: () => null, setItem: () => {} }, { live: true });
+  const input = manager.readImport(json);
+  manager.importProfile(json, input.mods.map(mod => mod.package));
+  const exported = manager.exportProfile().json;
+  const publisher = createSharingClient({ fetchImpl: async (url, options) => {
+    assert.equal(options.body, exported);
+    return Response.json({ key });
+  } });
+  assert.equal(await publisher.publishProfile(exported), code);
+  const recipient = createSharingClient({ fetchImpl: async () => new Response(exported) });
+  assert.deepEqual(JSON.parse(await recipient.resolveProfile(code)).userDataFiles, parsed.userDataFiles);
+});
+
 test('Thunderstore import resolves exact versions, disabled choices, missing dependencies, and config files through the approved CDN', async () => {
   const selectedGame = 'repo';
   const calls = [];

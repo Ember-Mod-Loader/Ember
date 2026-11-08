@@ -165,40 +165,42 @@ test('progress supports unknown content lengths and never completes an invalid Z
   assert.equal(events.at(-1).total, archive.length);
 });
 
-test('PEAK catalog packages download into their game cache and persist profile history', async t => {
+for (const [gameId, steamId] of [['peak', '3527290'], ['mimesis', '2827200']]) {
+test(`${gameId} catalog packages download into their game cache and persist profile history`, async t => {
   const root = await temporaryDirectory(t);
   const { getGame } = await import('../src/catalog.js');
-  assert.equal(getGame('peak').steamId, '3527290');
-  assert.equal(getGame('peak').icon, './art/game-peak.jpg');
+  assert.equal(getGame(gameId).steamId, steamId);
+  assert.equal(getGame(gameId).icon, `./art/game-${gameId}.jpg`);
   const modulePath = require.resolve('../electron/thunderstore.cjs');
   delete require.cache[modulePath];
   t.mock.method(globalThis, 'fetch', async input => {
     const url = new URL(input);
-    assert.match(url.pathname, /\/peak\//);
+    assert(url.pathname.includes(`/${gameId}/`));
     return url.pathname.endsWith('/filters/')
       ? Response.json({ package_categories: [] })
       : Response.json({
         count: 1, next: null,
-        results: [{ community_identifier: 'peak', namespace: 'Test-team', name: 'Plugin', latest_version_number: '1.2.3' }],
+        results: [{ community_identifier: gameId, namespace: 'Test-team', name: 'Plugin', latest_version_number: '1.2.3' }],
       });
   });
   const { fetchCatalog } = require(modulePath);
-  const { mods } = await fetchCatalog({ gameId: 'peak' });
-  assert.equal(mods[0].id, 'peak/Test-team/Plugin');
+  const { mods } = await fetchCatalog({ gameId });
+  assert.equal(mods[0].id, `${gameId}/Test-team/Plugin`);
   const { createDownloadHistory } = require('../electron/download-history.cjs');
   const historyPath = path.join(root, 'history.json');
   const history = await createDownloadHistory(historyPath);
   const id = require('node:crypto').randomUUID();
-  await history.start({ id, gameId: 'peak', profileId: 'peak-default', profileName: 'Default', label: 'Plugin' });
+  await history.start({ id, gameId, profileId: `${gameId}-default`, profileName: 'Default', label: 'Plugin' });
   history.plan(id, mods);
   const cache = createPackageCache(path.join(root, 'cache'), async () => new Response(archive));
-  const result = await cache.downloadPackage({ ...packageId, gameId: 'peak' }, event =>
-    history.progress(id, 'peak/Test-team/Plugin@1.2.3', event));
+  const result = await cache.downloadPackage({ ...packageId, gameId }, event =>
+    history.progress(id, `${gameId}/Test-team/Plugin@1.2.3`, event));
   await history.ready(id);
   await history.complete(id);
-  assert.deepEqual(await readFile(path.join(cache.root, 'peak', result.filename)), archive);
+  assert.deepEqual(await readFile(path.join(cache.root, gameId, result.filename)), archive);
   const saved = (await createDownloadHistory(historyPath)).list()[0];
-  assert.equal(saved.gameId, 'peak');
+  assert.equal(saved.gameId, gameId);
   assert.equal(saved.status, 'complete');
 });
+}
 

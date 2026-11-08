@@ -3,6 +3,7 @@ const COMMUNITIES = new Map([
   ['lethal-company', 'lethal-company'],
   ['repo', 'repo'],
   ['peak', 'peak'],
+  ['mimesis', 'mimesis'],
   ['valheim', 'valheim'],
   ['risk-of-rain-2', 'riskofrain2'],
 ]);

@@ -7,7 +7,7 @@ const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const MAX_NATIVE_PROFILE_BYTES = Math.ceil(MAX_ARCHIVE_BYTES / 3) * 4 + 128;
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
-const GAMES = new Set(['lethal-company', 'repo', 'peak']);
+const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 const TEXT_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i;
 const INVALID_CHARACTER = /[<>:"\\|?*\x00-\x1f\x7f]/;
 const RESERVED_DEVICE = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i;
@@ -64,7 +64,7 @@ function parseManifest(text) {
 }
 
 async function parseThunderstoreProfile(value, gameId) {
-  if (!GAMES.has(gameId)) throw new Error('Choose Lethal Company, R.E.P.O., or PEAK before importing.');
+  if (!GAMES.has(gameId)) throw new Error('Choose a supported game before importing.');
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_NATIVE_PROFILE_BYTES || !value.startsWith('#r2modman')) {
     throw new Error('This code does not contain a supported Thunderstore profile.');
   }
@@ -75,10 +75,12 @@ async function parseThunderstoreProfile(value, gameId) {
   const buffer = Buffer.from(encoded, 'base64');
   if (buffer.length > MAX_ARCHIVE_BYTES || buffer.toString('base64') !== encoded) throw new Error('The Thunderstore profile exceeds the 20 MB archive limit.');
   let archive;
-  try { archive = await yauzl.fromBufferPromise(buffer, { autoClose: false, strictFileNames: true, validateEntrySizes: true }); }
+  // Windows profile exports can use backslashes. yauzl normalizes them before our path checks.
+  try { archive = await yauzl.fromBufferPromise(buffer, { autoClose: false, strictFileNames: false, validateEntrySizes: true }); }
   catch { throw new Error('The Thunderstore profile archive could not be read.'); }
   let manifest;
   const configFiles = Object.create(null);
+  const userDataFiles = Object.create(null);
   const skipped = [];
   const registry = new Map();
   let expanded = 0;
@@ -97,8 +99,9 @@ async function parseThunderstoreProfile(value, gameId) {
       if (directory) continue;
       const isManifest = entry.fileName === 'export.r2x';
       const config = /^(?:BepInEx\/)?config\/(.+)$/i.exec(entry.fileName);
+      const userData = /^UserData\/(.+)$/i.exec(entry.fileName);
       if (!isManifest && !TEXT_EXTENSION.test(entry.fileName)) throw new Error('The profile contains an executable or unsupported file.');
-      const maximum = isManifest ? MAX_MANIFEST_BYTES : config ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
+      const maximum = isManifest ? MAX_MANIFEST_BYTES : config || userData ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
       if (entry.uncompressedSize > maximum) throw new Error('A profile file exceeds its supported size limit.');
       const stream = await archive.openReadStreamPromise(entry);
       const chunks = [];
@@ -114,12 +117,16 @@ async function parseThunderstoreProfile(value, gameId) {
       else if (config) {
         if (Object.hasOwn(configFiles, config[1])) throw new Error('The profile contains conflicting configuration paths.');
         configFiles[config[1]] = text;
+      } else if (userData) {
+        if (Object.hasOwn(userDataFiles, userData[1])) throw new Error('The profile contains conflicting configuration paths.');
+        userDataFiles[userData[1]] = text;
       } else if (!/^mods\.yml$/i.test(entry.fileName)) skipped.push(entry.fileName);
     }
     if (!manifest) throw new Error('The Thunderstore profile is missing export.r2x.');
-    const warnings = skipped.slice(0, 10).map(name => `Not imported: ${name} (outside BepInEx/config).`);
-    if (skipped.length > 10) warnings.push(`${skipped.length - 10} more files outside BepInEx/config were not imported.`);
-    return { ...manifest, gameId, configFiles: normalizeConfigFiles(configFiles), importWarnings: warnings };
+    const warnings = skipped.slice(0, 10).map(name => `Not imported: ${name} (outside BepInEx/config or UserData).`);
+    if (skipped.length > 10) warnings.push(`${skipped.length - 10} more files outside BepInEx/config or UserData were not imported.`);
+    return { ...manifest, gameId, configFiles: normalizeConfigFiles(configFiles),
+      userDataFiles: normalizeConfigFiles(userDataFiles), importWarnings: warnings };
   } finally { archive.close(); }
 }
 

@@ -25,7 +25,7 @@ function newId() {
 }
 
 function newProfile(gameId, name, id = newId()) {
-  return { id, gameId, name, mods: [], configs: {}, configFiles: {} };
+  return { id, gameId, name, mods: [], configs: {}, configFiles: {}, userDataFiles: {} };
 }
 
 function initialState(live) {
@@ -225,7 +225,8 @@ function readProfile(value, live) {
     configs[id] = content;
   }
 
-  return { gameId: value.gameId, name, mods: [...modsById.values()], configs, configFiles: readConfigFiles(value.configFiles) };
+  return { gameId: value.gameId, name, mods: [...modsById.values()], configs,
+    configFiles: readConfigFiles(value.configFiles), userDataFiles: readConfigFiles(value.userDataFiles) };
 }
 
 function loadState(storage, live) {
@@ -612,8 +613,8 @@ export function createManager(storage = globalThis.localStorage, { live = false 
     },
 
     exportProfile(id = activeProfile().id) {
-      const { gameId, name, mods, configs, configFiles } = findProfile(id);
-      const payload = { format: PROFILE_FORMAT, version: 1, ...(live ? { source: "thunderstore" } : {}), gameId, name, mods, configs, configFiles };
+      const { gameId, name, mods, configs, configFiles, userDataFiles } = findProfile(id);
+      const payload = { format: PROFILE_FORMAT, version: 1, ...(live ? { source: "thunderstore" } : {}), gameId, name, mods, configs, configFiles, userDataFiles };
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       return {
         code: toCode(JSON.stringify(payload)),

@@ -6,7 +6,7 @@ const MAX_PROFILE_BYTES = 3 * 1024 * 1024;
 const KEY = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CODE = new RegExp(`^(?:EMBER-)?(${KEY})$`, 'i');
 const CDN_HOSTS = new Set(['ccdn.thunderstore.io', 'cdn.thunderstore.io', 'gcdn.thunderstore.io']);
-const GAME_IDS = new Set(['lethal-company', 'repo', 'peak']);
+const GAME_IDS = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 
 function profileJson(value, importing = false) {
   const message = importing
@@ -234,7 +234,8 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = as
     } while (changed);
     const mods = [...entries.values()].map(entry => ({ id: entry.mod.id, version: entry.version, enabled: entry.enabled, package: entry.mod }));
     const result = JSON.stringify({ format: 'modrelay-profile', version: 1, source: 'thunderstore', gameId,
-      name: parsed.name, mods, configs: {}, configFiles: parsed.configFiles, importWarnings: parsed.importWarnings });
+      name: parsed.name, mods, configs: {}, configFiles: parsed.configFiles,
+      userDataFiles: parsed.userDataFiles, importWarnings: parsed.importWarnings });
     if (Buffer.byteLength(result, 'utf8') > MAX_PROFILE_BYTES) throw new Error('The converted Ember profile exceeds 3 MB.');
     return result;
   }

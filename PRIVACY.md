@@ -1,10 +1,10 @@
 # Privacy
 
-Applies to Ember 0.5.6.
+Applies to Ember 0.6.0.
 
 ## On your device
 
-Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account system, behavioral tracking, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company, R.E.P.O., and PEAK.
+Profiles, favorites, preferences, game setup information, download progress history, and downloaded ZIPs are stored locally. Ember has no account system, behavioral tracking, or app crash-report upload. Game setup reads the local Steam installation information needed to locate Lethal Company, R.E.P.O., PEAK, and MIMESIS. Mods that place files in the game folder have their replaced files backed up locally; edited mod files are kept as recovery copies during restoration.
 
 Ember stores a temporary random presence-session lease in local app data. It is valid for 120 seconds after its last renewal, allowing quick restarts to reuse a session rather than briefly count twice. Each app process receives new connection ownership. Expired leases are ignored and replaced with a new random session; this is not a stable device identifier.
 

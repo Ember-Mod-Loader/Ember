@@ -1,12 +1,14 @@
-# Ember 0.5.6
+# Ember 0.6.0
 
-- Added a **Thunderstore / r2modman** option in **Import profile** for native profile codes.
-- Imports preserve package versions and enabled states, and download required dependencies for the selected game.
-- Supported BepInEx configuration files stay with the imported profile and apply when it is prepared or launched.
-- Archives with unsupported file locations show a review step before importing supported data. Existing Ember codes and JSON imports remain available.
-- Fixed search refreshes resetting the cursor or selection while typing.
-- Added support for shared BepInEx core libraries, including OdinSerializer, while preserving loader-file collision checks.
+- Added **MIMESIS** with its Thunderstore catalog, official game icon, Steam detection, profiles, and modded or vanilla launching through MelonLoader.
+- Added MelonLoader 0.7+ profile support, including recursive mods, plugins, libraries, UserData imports, and managed loader updates.
+- Expanded BepInEx installation support for bare core folders, MonoMod patches, package wrappers, and explicit game-root or game-data files.
+- Game-root replacements are backed up and restored when another profile starts, vanilla launches, or Ember's loader is removed. Edited mod files are preserved in a recovery folder.
+- Packages for incompatible loaders and ambiguous archive layouts now show the affected path instead of being silently placed in the plugins folder.
+- Fixed imports of Windows Thunderstore profiles whose configuration paths use backslashes.
+- Compatible existing loaders are reused directly when launching, without another confirmation dialog.
+- The launch button shows **Starting…** or **Running**, blocks duplicate launches, and returns to normal when the game closes.
 
-Installed clients receive this update through **Settings → Update client** or the automatic startup check. Portable users can download a replacement from the [latest release](https://github.com/Ember-Mod-Loader/Ember/releases/latest).
+Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
-Both Windows builds are unsigned. Existing profiles and preferences are preserved.
+Windows builds are currently unsigned.

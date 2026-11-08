@@ -5,7 +5,7 @@ const path = require('node:path');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const GAMES = new Set(['lethal-company', 'repo', 'peak', 'risk-of-rain-2', 'valheim']);
+const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis', 'risk-of-rain-2', 'valheim']);
 const DOWNLOAD_HOSTS = new Set(['thunderstore.io', 'old.thunderstore.io', 'www.thunderstore.io']);
 const ARCHIVE_HOSTS = new Set(['cdn.thunderstore.io', 'ccdn.thunderstore.io', 'gcdn.thunderstore.io']);
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);

@@ -4,6 +4,7 @@ const { promisify } = require('node:util');
 const { createHash } = require('node:crypto');
 const { constants } = require('node:fs');
 const { lstat, readdir, readFile, realpath, open, unlink, mkdtemp, rename, copyFile, rmdir } = require('node:fs/promises');
+const { createGameFileManager } = require('./game-files.cjs');
 
 const exec = promisify(execFile);
 // Each launcher is bound to one Steam app. Never infer the game from a supplied path.
@@ -11,6 +12,7 @@ const SUPPORTED_GAMES = Object.freeze({
   'lethal-company': Object.freeze({ id: 'lethal-company', name: 'Lethal Company', steamId: '1966720', executable: 'Lethal Company.exe', dataDirectory: 'Lethal Company_Data' }),
   repo: Object.freeze({ id: 'repo', name: 'R.E.P.O.', steamId: '3241660', executable: 'REPO.exe', dataDirectory: 'REPO_Data' }),
   peak: Object.freeze({ id: 'peak', name: 'PEAK', steamId: '3527290', executable: 'PEAK.exe', dataDirectory: 'PEAK_Data' }),
+  mimesis: Object.freeze({ id: 'mimesis', name: 'MIMESIS', steamId: '2827200', executable: 'MIMESIS.exe', dataDirectory: 'MIMESIS_Data' }),
 });
 
 function supportedGame(gameId) {
@@ -26,6 +28,7 @@ const OTHER_PROXIES = ['version.dll', 'dxgi.dll', 'dinput8.dll', 'd3d11.dll', 'w
 const OTHER_LOADERS = ['melonloader', 'ue4ss', 'bepinex', 'bepinexpack', '.thunderstoremm'];
 const PRELOADER = ['BepInEx', 'core', 'BepInEx.Preloader.dll'];
 const SETUP_LIMIT = 2 * 1024 * 1024;
+const MELON_OWNERSHIP = '.ember-melonloader.json';
 
 function isLocalPath(value) {
   return typeof value === 'string' && /^[a-z]:[\\/]/i.test(value) && !value.includes('\0');
@@ -152,6 +155,34 @@ async function doorstopFiles(dir, gameId = 'lethal-company') {
   return { proxy, config, version, major, ignoresDisable: ignoreDisable?.toLowerCase() === 'true' };
 }
 
+async function melonFiles(dir, requireRuntime = false) {
+  const proxyNames = [];
+  for (const name of ['version.dll', 'winhttp.dll']) if (await info(path.join(dir, name))) proxyNames.push(name);
+  if (proxyNames.length !== 1) return null;
+  const proxyName = proxyNames[0];
+  const proxy = await readSmall(path.join(dir, proxyName), 32 * 1024 * 1024);
+  if (!proxy || !isX64Pe(proxy) || !proxy.includes(Buffer.from('--no-mods')) ||
+      !['utf8', 'utf16le'].some(encoding => proxy.includes(Buffer.from('MelonLoader', encoding)))) return null;
+  const dobbyInfo = await info(path.join(dir, 'dobby.dll'));
+  const dobby = dobbyInfo ? await readSmall(path.join(dir, 'dobby.dll'), 32 * 1024 * 1024) : null;
+  if (dobbyInfo && (!dobby || !isX64Pe(dobby))) return null;
+  if (requireRuntime) {
+    if (await info(path.join(dir, ...PRELOADER))) return null;
+    for (const framework of ['net35', 'net6']) {
+      const assembly = path.join(dir, 'MelonLoader', framework, 'MelonLoader.dll');
+      if (!(await info(assembly))?.isFile() || absoluteKey(await realpath(assembly)) !== absoluteKey(assembly)) return null;
+    }
+  }
+  return { proxyName, proxy, dobby };
+}
+
+function ownsMelon(marker, files) {
+  try {
+    const parsed = JSON.parse(marker?.toString('utf8') ?? 'null');
+    return parsed?.version === 1 && (parsed.proxyName ?? 'version.dll') === files.proxyName && parsed.proxy === digest(files.proxy) && parsed.dobby === (files.dobby ? digest(files.dobby) : null);
+  } catch { return false; }
+}
+
 function digest(contents) {
   return createHash('sha256').update(contents).digest('hex');
 }
@@ -170,18 +201,28 @@ function ownsFiles(marker, files) {
 async function inspectInstall(install) {
   const { gameDir } = install;
   const names = new Set((await readdir(gameDir)).map(name => name.toLowerCase()));
-  const base = { ...install, doorstopMajor: null, canLaunchVanilla: false };
+  const base = { ...install, doorstopMajor: null, loaderKind: null, canLaunchVanilla: false };
   const blocked = { ...base, loader: 'unsupported', message: 'This Steam folder contains an unrecognized mod loader. Use a clean installation or a compatible Unity Doorstop setup.' };
-  if (OTHER_PROXIES.some(name => names.has(name)) || names.has('melonloader') || names.has('ue4ss')) return blocked;
+  if ((names.has('version.dll') !== names.has(PROXY)) && !names.has('ue4ss') &&
+      !OTHER_PROXIES.filter(name => name !== 'version.dll').some(name => names.has(name))) {
+    const files = await melonFiles(gameDir);
+    if (files) {
+    const managed = ownsMelon(await readSmall(path.join(gameDir, MELON_OWNERSHIP), 4096), files);
+    return { ...base, loader: managed ? 'managed' : 'existing', loaderKind: 'melonloader', canLaunchVanilla: true,
+      loaderFingerprint: digest(JSON.stringify([gameDir.toLowerCase(), digest(files.proxy), files.dobby ? digest(files.dobby) : null])),
+      message: managed ? 'The Ember MelonLoader is ready.' : 'A compatible MelonLoader is already installed.' };
+    }
+  }
+  if (OTHER_PROXIES.some(name => names.has(name)) || names.has('melonloader') || names.has('ue4ss') || names.has(MELON_OWNERSHIP)) return blocked;
   if (!ROOT_FILES.some(name => names.has(name))) {
     if (OTHER_LOADERS.some(name => names.has(name))) return blocked;
-    return { ...base, loader: 'clean', canLaunchVanilla: true, message: 'Set up the Doorstop loader to launch a modded profile.' };
+    return { ...base, loader: 'clean', canLaunchVanilla: true, message: `Set up ${install.gameId === 'mimesis' ? 'MelonLoader' : 'the mod loader'} to launch a modded profile.` };
   }
   const files = await doorstopFiles(gameDir, install.gameId);
   if (!files) return blocked;
   const managed = ownsFiles(await readSmall(path.join(gameDir, OWNERSHIP_FILE), 4096), files);
   return {
-    ...base, loader: managed ? 'managed' : 'existing', doorstopMajor: files.major, canLaunchVanilla: !files.ignoresDisable,
+    ...base, loader: managed ? 'managed' : 'existing', loaderKind: 'bepinex', doorstopMajor: files.major, canLaunchVanilla: !files.ignoresDisable,
     loaderFingerprint: digest(JSON.stringify([gameDir.toLowerCase(), digest(files.proxy), digest(files.config), files.version ? digest(files.version) : null])),
     message: managed ? 'The Ember loader is ready.' : 'A compatible Unity Doorstop loader is already installed. Choose whether to reuse it.',
   };
@@ -191,14 +232,38 @@ async function inspectInstall(install) {
 const SUPPORTED_GAME_EXECUTABLES = new Map(Object.values(SUPPORTED_GAMES)
   .map(game => [game.executable.toLowerCase(), game.name]));
 
-async function runningImages(run) {
+async function runningProcesses(run) {
   const { stdout } = await run(systemExecutable('tasklist.exe'), ['/FO', 'CSV', '/NH'], {
     windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024,
   });
   const lines = typeof stdout === 'string' ? stdout.trim().split(/\r?\n/).filter(Boolean) : [];
-  const names = lines.map(line => /^"([^"\r\n]+)",/.exec(line)?.[1].toLowerCase());
-  if (!names.length || names.some(name => !name)) throw new Error('Unreadable process enumeration.');
-  return names;
+  const processes = new Map();
+  for (const line of lines) {
+    const match = /^"([^"\r\n]+)","(\d{1,10})","[^"\r\n]*","\d{1,10}","[^"\r\n]*"$/.exec(line);
+    const pid = match && Number(match[2]);
+    if (!match || !Number.isSafeInteger(pid) || pid > 0xffffffff) throw new Error('Unreadable process enumeration.');
+    const image = match[1].toLowerCase();
+    if (processes.has(pid) && processes.get(pid) !== image) throw new Error('Conflicting process enumeration.');
+    processes.set(pid, image);
+  }
+  if (!processes.size) throw new Error('Unreadable process enumeration.');
+  return [...processes].map(([pid, image]) => ({ pid, image }));
+}
+
+async function runningImages(run) {
+  return (await runningProcesses(run)).map(process => process.image);
+}
+
+function createGameRunningCheck({ gameId = 'lethal-company', run = exec, platform = process.platform } = {}) {
+  const game = supportedGame(gameId);
+  return async function getRunningStatus() {
+    if (platform !== 'win32') throw new Error('Game process checks are available only on Windows.');
+    let processes;
+    try { processes = await runningProcesses(run); }
+    catch { throw new Error(`Ember could not confirm whether ${game.name} is running.`); }
+    const processCount = processes.filter(process => process.image === game.executable.toLowerCase()).length;
+    return { running: processCount > 0, processCount };
+  };
 }
 
 function createGameGuard({ gameId = 'lethal-company', run = exec, platform = process.platform } = {}) {
@@ -356,9 +421,10 @@ async function removeRootFiles(dir, files) {
   }
 }
 
-function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots, assertClosed, startSteam = spawnSteam } = {}) {
+function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots, assertClosed, startSteam = spawnSteam, runProcesses = exec, platform = process.platform } = {}) {
   const game = supportedGame(gameId);
-  assertClosed ??= createGameGuard({ gameId });
+  assertClosed ??= createGameGuard({ gameId, run: runProcesses, platform });
+  const getRunningStatus = createGameRunningCheck({ gameId, run: runProcesses, platform });
   let operation = false;
 
   async function getLaunchStatus(gameDir) {
@@ -391,6 +457,16 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
       if (status.loader === 'managed') return status;
       if (status.loader !== 'clean') throw new Error('This Steam folder already contains loader files. Choose reuse for a compatible loader.');
       const canonical = isLocalPath(loaderPath) && await realpath(loaderPath).catch(() => null);
+      const melon = canonical && await melonFiles(canonical, true);
+      if (melon) {
+        await assertClosed();
+        const marker = Buffer.from(JSON.stringify({ version: 1, proxyName: melon.proxyName, proxy: digest(melon.proxy), dobby: melon.dobby ? digest(melon.dobby) : null }) + '\n');
+        const files = [[MELON_OWNERSHIP, marker]];
+        if (melon.dobby) files.push(['dobby.dll', melon.dobby]);
+        files.push([melon.proxyName, melon.proxy]);
+        await installRootFiles(status.gameDir, files);
+        return inspectInstall(status);
+      }
       const files = canonical && await doorstopFiles(canonical, game.id);
       if (!files) throw new Error('The staged profile needs an official Windows x64 BepInEx pack.');
       await assertClosed();
@@ -411,6 +487,17 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
       const status = await getLaunchStatus(gameDir);
       if (status.loader !== 'managed') throw new Error('Only unchanged loader files installed by Ember can be removed here.');
       await assertClosed();
+      await createGameFileManager(status.gameDir).restore();
+      if (status.loaderKind === 'melonloader') {
+        const files = await melonFiles(status.gameDir);
+        const marker = await readSmall(path.join(status.gameDir, MELON_OWNERSHIP), 4096);
+        if (!files || !ownsMelon(marker, files)) throw new Error('The MelonLoader files changed. Ember did not remove them.');
+        const entries = [[files.proxyName, files.proxy], [MELON_OWNERSHIP, marker]];
+        if (files.dobby) entries.push(['dobby.dll', files.dobby]);
+        const backup = await removeRootFiles(status.gameDir, entries);
+        const result = await inspectInstall(status);
+        return backup ? { ...result, message: `Loader removed. Recovery files are in ${backup}.` } : result;
+      }
       const files = await doorstopFiles(status.gameDir, game.id);
       const marker = await readSmall(path.join(status.gameDir, OWNERSHIP_FILE), 4096);
       if (!files || !ownsFiles(marker, files)) throw new Error('The loader files changed. Ember left them in place.');
@@ -429,9 +516,11 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
       const status = await getLaunchStatus(gameDir);
       const args = ['-applaunch', game.steamId];
       const enable = status.doorstopMajor === 4 ? '--doorstop-enabled' : '--doorstop-enable';
+      const gameFiles = createGameFileManager(status.gameDir);
       if (mode === 'vanilla') {
         if (!status.canLaunchVanilla) throw new Error('The game folder’s loader prevents Ember from safely launching vanilla.');
-        if (status.doorstopMajor) args.push(enable, 'false');
+        if (status.loaderKind === 'melonloader') args.push('--no-mods');
+        else if (status.doorstopMajor) args.push(enable, 'false');
       } else {
         if (status.loader === 'existing' && (allowExistingDoorstop !== true ||
             (loaderFingerprint !== undefined && loaderFingerprint !== status.loaderFingerprint))) {
@@ -439,6 +528,29 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
         }
         if (status.loader !== 'managed' && status.loader !== 'existing') throw new Error(status.message);
         const profile = isLocalPath(profilePath) && await realpath(profilePath).catch(() => null);
+        if (status.loaderKind === 'melonloader') {
+          const files = profile && await melonFiles(profile, true);
+          if (!files) throw new Error('Prepare a profile containing MelonLoader 0.7.0 or newer before launching.');
+          const installed = await melonFiles(status.gameDir);
+          if (!installed || installed.proxyName !== files.proxyName || digest(installed.proxy) !== digest(files.proxy) ||
+              (installed.dobby ? digest(installed.dobby) : null) !== (files.dobby ? digest(files.dobby) : null)) {
+            if (status.loader !== 'managed' || !installed) throw new Error('This game folder uses a different MelonLoader version. Use a matching profile or remove that loader first.');
+            await assertClosed();
+            const previousMarker = await readSmall(path.join(status.gameDir, MELON_OWNERSHIP), 4096);
+            if (!ownsMelon(previousMarker, installed)) throw new Error('The installed MelonLoader changed. Review it in Settings.');
+            const oldEntries = [[installed.proxyName, installed.proxy], [MELON_OWNERSHIP, previousMarker]];
+            if (installed.dobby) oldEntries.push(['dobby.dll', installed.dobby]);
+            const recovery = await removeRootFiles(status.gameDir, oldEntries);
+            if (recovery) throw new Error(`MelonLoader update stopped. Recovery files are in ${recovery}.`);
+            const newMarker = Buffer.from(JSON.stringify({ version: 1, proxyName: files.proxyName, proxy: digest(files.proxy), dobby: files.dobby ? digest(files.dobby) : null }) + '\n');
+            const newEntries = [[MELON_OWNERSHIP, newMarker]];
+            if (files.dobby) newEntries.push(['dobby.dll', files.dobby]);
+            newEntries.push([files.proxyName, files.proxy]);
+            try { await installRootFiles(status.gameDir, newEntries); }
+            catch (error) { await installRootFiles(status.gameDir, oldEntries); throw error; }
+          }
+          args.push('--melonloader.basedir', profile);
+        } else {
         const assembly = profile && path.join(profile, ...PRELOADER);
         const target = assembly && await realpath(assembly).catch(() => null);
         if (!target || absoluteKey(target) !== absoluteKey(assembly) || !(await info(assembly))?.isFile()) {
@@ -450,14 +562,19 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
           throw new Error(`This game folder uses Doorstop ${status.doorstopMajor}. Use a profile with a matching BepInExPack version.`);
         }
         args.push(enable, 'true', status.doorstopMajor === 4 ? '--doorstop-target-assembly' : '--doorstop-target', target);
+        }
       }
       await assertClosed();
-      await startSteam(status.steamExe, args);
+      if (mode === 'modded') await gameFiles.apply(await realpath(profilePath));
+      else await gameFiles.restore();
+      try { await startSteam(status.steamExe, args); }
+      catch (error) { if (mode === 'modded') await gameFiles.restore(); throw error; }
       return { mode, gameDir: status.gameDir };
     });
   }
 
-  const adapter = { findGame, getLaunchStatus, prepareDoorstop, removeManagedDoorstop, launchGame, assertGameClosed: assertClosed };
+  const adapter = { findGame, getLaunchStatus, prepareDoorstop, removeManagedDoorstop, launchGame, assertGameClosed: assertClosed,
+    getRunningStatus, isGameRunning: async () => (await getRunningStatus()).running };
   if (gameId === 'lethal-company') Object.assign(adapter, {
     findLethalCompany: findGame, launchLethalCompany: launchGame, assertLethalCompanyClosed: assertClosed,
   });
@@ -465,5 +582,5 @@ function createSteamAdapter({ gameId = 'lethal-company', findRoots = steamRoots,
 }
 
 module.exports = { ...createSteamAdapter(), createSteamAdapter, createGameLauncher: createSteamAdapter,
-  SUPPORTED_GAMES, createGameGuard, createSupportedGameGuard,
+  SUPPORTED_GAMES, createGameGuard, createSupportedGameGuard, createGameRunningCheck,
   assertSupportedGamesClosed: createSupportedGameGuard() };

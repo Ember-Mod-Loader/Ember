@@ -11,16 +11,19 @@ const profileId = 'lethal-company-default';
 const loader = { namespace: 'BepInEx', name: 'BepInExPack', version: '5.4.2305' };
 const plugin = { namespace: 'Test-team', name: 'Plugin', version: '1.0.0' };
 
-async function fixture(t, { gameId = game, root: sharedRoot } = {}) {
+async function fixture(t, { gameId = game, root: sharedRoot, loaderKind = 'bepinex' } = {}) {
   const root = sharedRoot ?? await temporaryDirectory(t);
   const cache = { root: path.join(root, 'cache') };
   const gameCache = path.join(cache.root, gameId);
-  const selectedLoader = { ...loader, name: gameId === 'peak' ? 'BepInExPack_PEAK' : loader.name };
+  const selectedLoader = loaderKind === 'melonloader'
+    ? { namespace: 'LavaGang', name: 'MelonLoader', version: '0.7.3' }
+    : { ...loader, name: gameId === 'peak' ? 'BepInExPack_PEAK' : loader.name };
   const requests = [];
   const archives = new Map();
+  let archiveNumber = 0;
   const addPackage = async (ref, entries) => {
     const key = [ref.namespace, ref.name, ref.version].join('/');
-    const filename = 'archive-' + archives.size + '.zip';
+    const filename = 'archive-' + archiveNumber++ + '.zip';
     await writeFile(path.join(gameCache, filename), zipFixture(entries));
     archives.set(key, filename);
   };
@@ -33,7 +36,12 @@ async function fixture(t, { gameId = game, root: sharedRoot } = {}) {
     return { filename };
   };
   await mkdir(gameCache, { recursive: true });
-  await addPackage(selectedLoader, [
+  await addPackage(selectedLoader, loaderKind === 'melonloader' ? [
+    { name: 'version.dll', content: 'melon proxy' },
+    { name: 'MelonLoader/net35/MelonLoader.dll', content: 'mono loader' },
+    { name: 'MelonLoader/net6/MelonLoader.dll', content: 'il2cpp loader' },
+    { name: 'MelonLoader/Dependencies/runtime.json', content: '{}' },
+  ] : [
     { name: `${selectedLoader.name}/BepInEx/core/BepInEx.Preloader.dll`, content: 'preloader' },
     { name: `${selectedLoader.name}/winhttp.dll`, content: 'doorstop' },
     { name: `${selectedLoader.name}/doorstop_config.ini`, content: 'loader config' },
@@ -216,5 +224,136 @@ test('a shared core package cannot fill missing files in an incomplete loader', 
   ]);
   await assert.rejects(() => builder.prepareProfile(profileId, [loader, supplemental]), /BepInExPack is missing/);
   assert.deepEqual(requests, ['BepInEx/BepInExPack/5.4.2305']);
+});
+
+test('BepInEx override folders and MonoMod assemblies retain the correct destinations through package wrappers', async t => {
+  const { builder, addPackage } = await fixture(t);
+  const ref = { namespace: 'Tests', name: 'Overrides', version: '1.0.0' };
+  await addPackage(ref, [
+    { name: 'Outer/Overrides/core/Shared/helper.dll', content: 'shared' },
+    { name: 'Outer/Overrides/monomod/Explicit.mm.dll', content: 'explicit patch' },
+    { name: 'Outer/Overrides/Patches/Implicit.mm.dll', content: 'implicit patch' },
+    { name: 'Outer/Overrides/patchers/Preloader.dll', content: 'patcher' },
+    { name: 'Outer/Overrides/plugins/Plugin.dll', content: 'plugin' },
+    { name: 'Outer/Overrides/plugins/assets/nested/image.png', content: 'resource' },
+    { name: 'Outer/Overrides/config/settings.cfg', content: 'setting = true' },
+    { name: 'Outer/Overrides/README.md', content: 'metadata' },
+  ]);
+  const runtime = await builder.prepareProfile(profileId, [loader, ref]);
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/core/Shared/helper.dll'), 'utf8'), 'shared');
+  assert.equal(await readFile(path.join(runtime, 'BepInEx/config/settings.cfg'), 'utf8'), 'setting = true');
+  const folders = await readdir(path.join(runtime, 'BepInEx/plugins'));
+  assert.equal(folders.length, 1);
+  const directory = folders[0];
+  assert.equal(await readFile(path.join(runtime, `BepInEx/plugins/${directory}/assets/nested/image.png`), 'utf8'), 'resource');
+  assert.equal(await readFile(path.join(runtime, `BepInEx/monomod/${directory}/Explicit.mm.dll`), 'utf8'), 'explicit patch');
+  assert.equal(await readFile(path.join(runtime, `BepInEx/monomod/${directory}/Patches/Implicit.mm.dll`), 'utf8'), 'implicit patch');
+  assert.equal(await readFile(path.join(runtime, `BepInEx/patchers/${directory}/Preloader.dll`), 'utf8'), 'patcher');
+  assert(!(await readdir(path.join(runtime, 'BepInEx'), { recursive: true })).some(name => name.includes('Outer') || name.endsWith('README.md')));
+});
+
+test('explicit root and game data files stage separately while game-root BepInEx paths stay in the profile', async t => {
+  const { builder, addPackage } = await fixture(t);
+  const ref = { namespace: 'Tests', name: 'RootAssets', version: '1.0.0' };
+  await addPackage(ref, [
+    { name: 'Root/custom-assets/texture.bundle', content: 'root asset' },
+    { name: 'Lethal Company_Data/StreamingAssets/world.bundle', content: 'data asset' },
+    { name: 'Lethal Company/game-settings.ini', content: 'root settings' },
+    { name: 'Root/BepInEx/plugins/Example.dll', content: 'plugin' },
+  ]);
+  const runtime = await builder.prepareProfile(profileId, [loader, ref]);
+  assert.equal(await readFile(path.join(runtime, '.ember-game-files/custom-assets/texture.bundle'), 'utf8'), 'root asset');
+  assert.equal(await readFile(path.join(runtime, '.ember-game-files/Lethal Company_Data/StreamingAssets/world.bundle'), 'utf8'), 'data asset');
+  assert.equal(await readFile(path.join(runtime, '.ember-game-files/game-settings.ini'), 'utf8'), 'root settings');
+  assert.equal((await readdir(path.join(runtime, 'BepInEx/plugins'), { recursive: true })).filter(name => name.endsWith('Example.dll')).length, 1);
+  assert.equal(await readFile(path.join(runtime, '.ember-loader.json'), 'utf8'), JSON.stringify({ kind: 'bepinex', name: 'BepInExPack', version: loader.version }));
+});
+
+test('ambiguous loader wrappers, foreign loaders, proxy replacements and other-game data fail without replacing the runtime', async t => {
+  const { builder, addPackage } = await fixture(t);
+  const runtime = await builder.prepareProfile(profileId, [loader, plugin]);
+  const entries = [
+    [{ name: 'Wrapped/BepInEx/core/helper.dll', content: 'helper' }, { name: 'other.dll', content: 'ambiguous sibling' }],
+    [{ name: 'Wrapped/UE4SS/UE4SS.dll', content: 'foreign loader' }],
+    [{ name: 'MelonLoader/net6/MelonLoader.dll', content: 'other loader' }],
+    [{ name: 'Root/version.dll', content: 'proxy replacement' }],
+    [{ name: 'Root/Lethal Company.exe', content: 'executable replacement' }],
+    [{ name: 'Root/install.ps1', content: 'installer' }],
+    [{ name: 'PEAK_Data/StreamingAssets/test.bundle', content: 'other game' }],
+  ];
+  for (const [index, files] of entries.entries()) {
+    const ref = { namespace: 'Tests', name: `Unsupported${index}`, version: '1.0.0' };
+    await addPackage(ref, files);
+    await assert.rejects(() => builder.prepareProfile(profileId, [loader, ref]), /game layout Ember cannot deploy/);
+    assert.equal(await readFile(path.join(runtime, 'BepInEx/core/BepInEx.Preloader.dll'), 'utf8'), 'preloader');
+    assert.deepEqual(await readdir(path.dirname(runtime)), ['runtime']);
+  }
+});
+
+test('MIMESIS stages recursive MelonLoader mods, resources and UserData with isolated profile settings', async t => {
+  const { builder, loader: melon, addPackage, requests } = await fixture(t, { gameId: 'mimesis', loaderKind: 'melonloader' });
+  await addPackage(plugin, [
+    { name: 'Mods/Main.dll', content: 'mod' },
+    { name: 'Plugins/Startup.dll', content: 'plugin' },
+    { name: 'UserLibs/Helper.dll', content: 'library' },
+    { name: 'UserData/preferences.cfg', content: 'bundled settings' },
+    { name: 'assets/nested/image.png', content: 'asset' },
+    { name: 'readme.md', content: 'metadata' },
+  ]);
+  const imported = { 'MelonPreferences.cfg': 'global preference', 'crew/settings.json': '{"crew":"café"}', [`${plugin.namespace}-${plugin.name}/preferences.cfg`]: 'imported mod settings' };
+  const runtime = await builder.prepareProfile('mimesis-default', [plugin, melon], {}, imported);
+  assert.equal(await readFile(path.join(runtime, 'version.dll'), 'utf8'), 'melon proxy');
+  assert.equal(await readFile(path.join(runtime, 'MelonLoader/net35/MelonLoader.dll'), 'utf8'), 'mono loader');
+  assert.equal(await readFile(path.join(runtime, 'MelonLoader/net6/MelonLoader.dll'), 'utf8'), 'il2cpp loader');
+  const [directory] = await readdir(path.join(runtime, 'Mods'));
+  assert.equal(await readFile(path.join(runtime, `Mods/${directory}/Mods/Main.dll`), 'utf8'), 'mod');
+  assert.equal(await readFile(path.join(runtime, `Mods/${directory}/Plugins/Startup.dll`), 'utf8'), 'plugin');
+  assert.equal(await readFile(path.join(runtime, `Mods/${directory}/UserLibs/Helper.dll`), 'utf8'), 'library');
+  assert.equal(await readFile(path.join(runtime, `Mods/${directory}/assets/nested/image.png`), 'utf8'), 'asset');
+  assert.equal(directory, `${plugin.namespace}-${plugin.name}`, 'Package folders match native profile exports.');
+  assert.equal(await readFile(path.join(runtime, `UserData/${directory}/preferences.cfg`), 'utf8'), 'imported mod settings');
+  assert.equal(await readFile(path.join(runtime, 'UserData/MelonPreferences.cfg'), 'utf8'), imported['MelonPreferences.cfg']);
+  const before = requests.length;
+  await builder.prepareProfile('mimesis-default', [melon, plugin], {}, imported);
+  assert.equal(requests.length, before);
+  await writeFile(path.join(runtime, 'UserData/MelonPreferences.cfg'), 'user edit');
+  await builder.prepareProfile('mimesis-default', [melon], {}, { ...imported, 'new.cfg': 'new template' });
+  assert.equal(await readFile(path.join(runtime, 'UserData/MelonPreferences.cfg'), 'utf8'), 'user edit');
+  assert.equal(await readFile(path.join(runtime, 'UserData/new.cfg'), 'utf8'), 'new template');
+  assert.equal((await readdir(runtime)).includes('Mods'), false);
+  assert.equal(await builder.openProfilePath('mimesis-default'), runtime);
+});
+
+test('MelonLoader packages must be complete and cannot be supplemented or mixed with BepInEx', async t => {
+  const { builder, loader: melon, addPackage } = await fixture(t, { gameId: 'mimesis', loaderKind: 'melonloader' });
+  await assert.rejects(() => builder.prepareProfile('mimesis-default', [melon, loader]), /cannot run in the same profile/);
+  await assert.rejects(() => builder.prepareProfile('mimesis-default', [{ ...melon, version: '0.6.6' }]), /0.7.0 or newer/);
+  await addPackage(melon, [
+    { name: 'version.dll', content: 'proxy' },
+    { name: 'MelonLoader/net35/MelonLoader.dll', content: 'incomplete loader' },
+  ]);
+  await addPackage(plugin, [{ name: 'MelonLoader/net6/MelonLoader.dll', content: 'supplemental loader' }]);
+  await assert.rejects(() => builder.prepareProfile('mimesis-default', [melon, plugin]), /MelonLoader is missing its Windows loader files/);
+});
+
+test('MelonLoader accepts either supported proxy but rejects dual proxies and foreign plugin layouts', async t => {
+  const { builder, loader: melon, addPackage } = await fixture(t, { gameId: 'mimesis', loaderKind: 'melonloader' });
+  const melonFiles = [
+    { name: 'winhttp.dll', content: 'modern proxy' },
+    { name: 'MelonLoader/net35/MelonLoader.dll', content: 'mono loader' },
+    { name: 'MelonLoader/net6/MelonLoader.dll', content: 'il2cpp loader' },
+  ];
+  await addPackage(melon, melonFiles);
+  const runtime = await builder.prepareProfile('mimesis-default', [melon]);
+  assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'modern proxy');
+  for (const name of ['BepInEx/plugins/Other.dll', 'Hooks.mm.dll', 'UE4SS/UE4SS.dll']) {
+    await addPackage(plugin, [{ name, content: 'wrong loader' }]);
+    await assert.rejects(() => builder.prepareProfile('mimesis-default', [melon, plugin]), /game layout Ember cannot deploy/);
+    assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'modern proxy');
+  }
+  const newer = { ...melon, version: '0.7.4' };
+  await addPackage(newer, [...melonFiles, { name: 'version.dll', content: 'second proxy' }]);
+  await assert.rejects(() => builder.prepareProfile('mimesis-default', [newer]), /missing its Windows loader files/);
+  assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'modern proxy');
 });
 

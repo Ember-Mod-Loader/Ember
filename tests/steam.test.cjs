@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { createSteamAdapter, createGameLauncher, createGameGuard, createSupportedGameGuard, SUPPORTED_GAMES } = require('../electron/steam.cjs');
+const { createSteamAdapter, createGameLauncher, createGameGuard, createSupportedGameGuard, createGameRunningCheck, SUPPORTED_GAMES } = require('../electron/steam.cjs');
 
 const WINDOWS_ONLY = { skip: process.platform !== 'win32' };
 const GAME_ID = '1966720';
@@ -12,7 +12,7 @@ const INI = 'doorstop_config.ini';
 const PROXY = 'winhttp.dll';
 
 test('client update process guard blocks each supported Steam game by exact case-insensitive image name', async () => {
-  for (const [image, game] of [['Lethal Company.exe', 'Lethal Company'], ['REPO.exe', 'R.E.P.O.'], ['PEAK.exe', 'PEAK']]) {
+  for (const [image, game] of [['Lethal Company.exe', 'Lethal Company'], ['REPO.exe', 'R.E.P.O.'], ['PEAK.exe', 'PEAK'], ['MIMESIS.exe', 'MIMESIS']]) {
     const guard = createSupportedGameGuard({ platform: 'win32', run: async (executable, args, options) => {
       assert.match(executable, /tasklist\.exe$/);
       assert.deepEqual(args, ['/FO', 'CSV', '/NH']);
@@ -56,6 +56,59 @@ test('each launcher process guard checks the selected game and fails closed when
   assert.equal(createGameLauncher, createSteamAdapter);
 });
 
+test('running status matches exact game image names and counts unique Windows process IDs', async () => {
+  for (const game of Object.values(SUPPORTED_GAMES)) {
+    let calls = 0;
+    const check = createGameRunningCheck({ gameId: game.id, platform: 'win32', run: async (executable, args, options) => {
+      calls++;
+      assert.match(executable, /tasklist\.exe$/);
+      assert.deepEqual(args, ['/FO', 'CSV', '/NH']);
+      assert.equal(options.windowsHide, true);
+      assert.equal(options.timeout, 5000);
+      return { stdout: [
+        `"${game.executable.toUpperCase()}","120","Console","1","10 K"`,
+        `"${game.executable.toLowerCase()}","121","Console","1","10 K"`,
+        `"${game.executable}","121","Console","1","10 K"`,
+        `"${game.executable}.helper","122","Console","1","10 K"`,
+        `"Not${game.executable}","123","Console","1","10 K"`,
+        '"Steam.exe","10","Console","1","10 K"',
+      ].join('\r\n') };
+    } });
+    assert.deepEqual(await check(), { running: true, processCount: 2 });
+    assert.equal(calls, 1);
+  }
+  const stopped = createGameRunningCheck({ gameId: 'mimesis', platform: 'win32', run: async () => ({ stdout:
+    '"MIMESIS.exe.helper","120","Console","1","10 K"\r\n"NotMIMESIS.exe","121","Console","1","10 K"' }) });
+  assert.deepEqual(await stopped(), { running: false, processCount: 0 });
+});
+
+test('running status fails closed for malformed tasklist data, invalid PIDs and enumeration failures', async () => {
+  for (const stdout of ['', undefined, 'tasklist failed', '"MIMESIS.exe"',
+    '"MIMESIS.exe","-1","Console"', '"MIMESIS.exe","not-a-pid","Console"',
+    '"MIMESIS.exe","4294967296","Console"',
+    '"MIMESIS.exe","12","Console"\r\n"Steam.exe","12","Console"']) {
+    const check = createGameRunningCheck({ gameId: 'mimesis', platform: 'win32', run: async () => ({ stdout }) });
+    await assert.rejects(check(), /could not confirm whether MIMESIS is running/);
+  }
+  const failed = createGameRunningCheck({ gameId: 'mimesis', platform: 'win32', run: async () => { throw new Error('tasklist denied'); } });
+  await assert.rejects(failed(), /could not confirm/);
+  const unsupported = createGameRunningCheck({ gameId: 'mimesis', platform: 'linux', run: () => assert.fail('must not inspect unsupported platform') });
+  await assert.rejects(unsupported(), /only on Windows/);
+});
+
+test('Steam adapter exposes live running status without launching the game or Steam', async () => {
+  let open = true;
+  const adapter = createSteamAdapter({ gameId: 'mimesis', platform: 'win32',
+    runProcesses: async () => ({ stdout: `"${open ? 'MIMESIS.exe' : 'Steam.exe'}","120","Console","1","10 K"` }),
+    startSteam: () => assert.fail('status must not start Steam'),
+  });
+  assert.deepEqual(await adapter.getRunningStatus(), { running: true, processCount: 1 });
+  assert.equal(await adapter.isGameRunning(), true);
+  open = false;
+  assert.deepEqual(await adapter.getRunningStatus(), { running: false, processCount: 0 });
+  assert.equal(await adapter.isGameRunning(), false);
+});
+
 async function write(file, contents = '') {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, contents);
@@ -84,6 +137,25 @@ async function stageLoader(root, major) {
     : '[UnityDoorstop]\nenabled=true\ntargetAssembly=BepInEx\\core\\BepInEx.Preloader.dll\n');
   if (major === 4) await write(path.join(loader, '.doorstop_version'), '4.5.0');
   return loader;
+}
+
+async function stageMelonLoader(root, label = 'Melon profile') {
+  const directory = path.join(root, label);
+  const proxy = Buffer.alloc(512);
+  proxy.writeUInt16LE(0x5a4d, 0);
+  proxy.writeUInt32LE(0x80, 0x3c);
+  proxy.writeUInt32LE(0x4550, 0x80);
+  proxy.writeUInt16LE(0x8664, 0x84);
+  proxy.write('MelonLoader\0--no-mods\0--melonloader.basedir\0', 0xa0, 'utf8');
+  await write(path.join(directory, 'version.dll'), proxy);
+  const dobby = Buffer.from(proxy);
+  dobby.write('dobby\0', 0x110, 'utf8');
+  await write(path.join(directory, 'dobby.dll'), dobby);
+  await write(path.join(directory, 'MelonLoader', 'net35', 'MelonLoader.dll'), 'Mono runtime');
+  await write(path.join(directory, 'MelonLoader', 'net6', 'MelonLoader.dll'), 'IL2CPP runtime');
+  await write(path.join(directory, 'Mods', 'Example.dll'), 'example mod');
+  await write(path.join(directory, 'UserData', 'Example.cfg'), 'Crew = café ☕');
+  return directory;
 }
 
 async function fixture(t, overrides = {}) {
@@ -120,6 +192,17 @@ async function fixture(t, overrides = {}) {
   });
   return { root, steam, library, game, gameDir, profilePath, preloader, adapter, launched };
 }
+
+test('MIMESIS discovers its Steam installation and uses its own executable and app ID', WINDOWS_ONLY, async t => {
+  const { steam, game, gameDir, profilePath, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  assert.equal(game.steamId, '2827200');
+  assert.equal(game.executable, 'MIMESIS.exe');
+  assert.equal(game.dataDirectory, 'MIMESIS_Data');
+  assert.equal((await adapter.findGame()).gameDir, await fs.realpath(gameDir));
+  await assert.rejects(adapter.getLaunchStatus(profilePath), /registered in your Steam library/);
+  await adapter.launchGame({ gameDir, mode: 'vanilla' });
+  assert.deepEqual(launched, [{ executable: await fs.realpath(path.join(steam, 'Steam.exe')), args: ['-applaunch', '2827200'] }]);
+});
 
 for (const major of [3, 4]) {
   test(`Steam stages Doorstop ${major} and dispatches matching launch flags`, WINDOWS_ONLY, async t => {
@@ -317,4 +400,145 @@ test('the official PEAK Doorstop marker is accepted only for PEAK and arbitrary 
   const peak = await fixture(t, { gameId: 'peak' });
   await write(path.join(loaderPath, '.doorstop_version'), '4.4.1UNRECOGNIZED');
   await assert.rejects(peak.adapter.prepareDoorstop({ gameDir: peak.gameDir, loaderPath }), /official Windows x64 BepInEx pack/);
+});
+
+test('MIMESIS installs MelonLoader proxies, launches isolated profiles and vanilla, then removes only its files', WINDOWS_ONLY, async t => {
+  const { root, game, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  const profile = await stageMelonLoader(root);
+  const second = await stageMelonLoader(root, 'Second Melon profile');
+  await write(path.join(gameDir, 'keep.txt'), 'unrelated game file');
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile }), /Set up/);
+  const status = await adapter.prepareDoorstop({ gameDir, loaderPath: profile });
+  assert.equal(status.loader, 'managed');
+  assert.equal(status.loaderKind, 'melonloader');
+  assert.equal(status.canLaunchVanilla, true);
+  for (const file of ['version.dll', 'dobby.dll', '.ember-melonloader.json']) assert((await fs.stat(path.join(gameDir, file))).isFile());
+  for (const folder of ['MelonLoader', 'Mods', 'UserData']) await assert.rejects(fs.stat(path.join(gameDir, folder)), { code: 'ENOENT' });
+  await adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile });
+  await adapter.launchGame({ gameDir, mode: 'modded', profilePath: second });
+  await adapter.launchGame({ gameDir, mode: 'vanilla' });
+  assert.deepEqual(launched.map(result => result.args), [
+    ['-applaunch', game.steamId, '--melonloader.basedir', await fs.realpath(profile)],
+    ['-applaunch', game.steamId, '--melonloader.basedir', await fs.realpath(second)],
+    ['-applaunch', game.steamId, '--no-mods'],
+  ]);
+  assert.equal(await fs.readFile(path.join(profile, 'UserData', 'Example.cfg'), 'utf8'), 'Crew = café ☕');
+  assert.equal((await adapter.removeManagedDoorstop(gameDir)).loader, 'clean');
+  for (const file of ['version.dll', 'dobby.dll', '.ember-melonloader.json']) await assert.rejects(fs.stat(path.join(gameDir, file)), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(path.join(gameDir, 'keep.txt'), 'utf8'), 'unrelated game file');
+});
+
+test('MelonLoader existing installs require reuse approval and exact proxy compatibility', WINDOWS_ONLY, async t => {
+  const { root, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  const profile = await stageMelonLoader(root);
+  await adapter.prepareDoorstop({ gameDir, loaderPath: profile });
+  await fs.unlink(path.join(gameDir, '.ember-melonloader.json'));
+  const status = await adapter.getLaunchStatus(gameDir);
+  assert.equal(status.loader, 'existing');
+  await assert.rejects(adapter.removeManagedDoorstop(gameDir), /Only unchanged/);
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile }), /Confirm reuse/);
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile, allowExistingDoorstop: true, loaderFingerprint: 'stale' }), /Confirm reuse/);
+  await adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile, allowExistingDoorstop: true, loaderFingerprint: status.loaderFingerprint });
+  const mismatch = await stageMelonLoader(root, 'Different Melon version');
+  await fs.appendFile(path.join(mismatch, 'version.dll'), 'other version');
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: mismatch, allowExistingDoorstop: true, loaderFingerprint: status.loaderFingerprint }), /different MelonLoader version/);
+  await adapter.launchGame({ gameDir, mode: 'vanilla' });
+  assert.equal(launched.length, 2);
+});
+
+test('switching MelonLoader versions updates only unchanged Ember-owned proxies and keeps ownership removable', WINDOWS_ONLY, async t => {
+  const { root, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  const original = await stageMelonLoader(root, 'Original Melon version');
+  const updated = await stageMelonLoader(root, 'Updated Melon version');
+  await fs.appendFile(path.join(updated, 'version.dll'), 'updated proxy');
+  await fs.appendFile(path.join(updated, 'dobby.dll'), 'updated dobby');
+  await adapter.prepareDoorstop({ gameDir, loaderPath: original });
+  const before = await adapter.getLaunchStatus(gameDir);
+  await adapter.launchGame({ gameDir, mode: 'modded', profilePath: updated });
+  assert.deepEqual(await fs.readFile(path.join(gameDir, 'version.dll')), await fs.readFile(path.join(updated, 'version.dll')));
+  assert.deepEqual(await fs.readFile(path.join(gameDir, 'dobby.dll')), await fs.readFile(path.join(updated, 'dobby.dll')));
+  const after = await adapter.getLaunchStatus(gameDir);
+  assert.equal(after.loader, 'managed');
+  assert.notEqual(after.loaderFingerprint, before.loaderFingerprint);
+  assert.equal(launched.length, 1);
+  assert.equal((await adapter.removeManagedDoorstop(gameDir)).loader, 'clean');
+});
+
+test('MelonLoader supports the official winhttp proxy name without treating it as Doorstop', WINDOWS_ONLY, async t => {
+  const { root, game, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  const profile = await stageMelonLoader(root, 'WinHTTP Melon profile');
+  await fs.rename(path.join(profile, 'version.dll'), path.join(profile, 'winhttp.dll'));
+  const installed = await adapter.prepareDoorstop({ gameDir, loaderPath: profile });
+  assert.equal(installed.loader, 'managed');
+  assert.equal(installed.loaderKind, 'melonloader');
+  assert.equal(installed.doorstopMajor, null);
+  await assert.rejects(fs.stat(path.join(gameDir, 'version.dll')), { code: 'ENOENT' });
+  await adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile });
+  await adapter.launchGame({ gameDir, mode: 'vanilla' });
+  assert.deepEqual(launched.map(item => item.args), [
+    ['-applaunch', game.steamId, '--melonloader.basedir', await fs.realpath(profile)],
+    ['-applaunch', game.steamId, '--no-mods'],
+  ]);
+  assert.equal((await adapter.removeManagedDoorstop(gameDir)).loader, 'clean');
+  await assert.rejects(fs.stat(path.join(gameDir, 'winhttp.dll')), { code: 'ENOENT' });
+});
+
+test('MelonLoader rejects incomplete or mixed loader profiles without launching', WINDOWS_ONLY, async t => {
+  const { root, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis' });
+  const profile = await stageMelonLoader(root);
+  await adapter.prepareDoorstop({ gameDir, loaderPath: profile });
+  const incomplete = await stageMelonLoader(root, 'Incomplete Melon');
+  await fs.unlink(path.join(incomplete, 'MelonLoader', 'net6', 'MelonLoader.dll'));
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: incomplete }), /MelonLoader|runtime/);
+  const mixed = await stageMelonLoader(root, 'Mixed loader');
+  await write(path.join(mixed, 'BepInEx', 'core', 'BepInEx.Preloader.dll'), 'other loader');
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: mixed }), /mixed|both|BepInEx|MelonLoader/);
+  await write(path.join(gameDir, 'winhttp.dll'), 'other proxy');
+  assert.equal((await adapter.getLaunchStatus(gameDir)).loader, 'unsupported');
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'vanilla' }), /safely launching vanilla/);
+  assert.deepEqual(launched, []);
+});
+
+test('MelonLoader setup rejects unknown and non-x64 proxies before writing game files', WINDOWS_ONLY, async t => {
+  const { root, gameDir, adapter } = await fixture(t, { gameId: 'mimesis' });
+  const profile = await stageMelonLoader(root);
+  const valid = await fs.readFile(path.join(profile, 'version.dll'));
+  for (const kind of ['x86', 'unknown']) {
+    const invalid = Buffer.from(valid);
+    if (kind === 'x86') invalid.writeUInt16LE(0x14c, 0x84);
+    else invalid.fill(0, 0xa0);
+    await fs.writeFile(path.join(profile, 'version.dll'), invalid);
+    await assert.rejects(adapter.prepareDoorstop({ gameDir, loaderPath: profile }), /official|MelonLoader|loader/);
+    await assert.rejects(fs.stat(path.join(gameDir, 'version.dll')), { code: 'ENOENT' });
+  }
+});
+
+test('MelonLoader blocks setup, launch and removal while MIMESIS is running and preserves changed proxies', WINDOWS_ONLY, async t => {
+  let running = true, mutate = false;
+  const { root, gameDir, adapter, launched } = await fixture(t, { gameId: 'mimesis', assertClosed: async game => {
+    if (running) throw new Error('MIMESIS is running');
+    if (mutate) await fs.appendFile(path.join(game, 'version.dll'), 'external change');
+  } });
+  const profile = await stageMelonLoader(root);
+  await assert.rejects(adapter.prepareDoorstop({ gameDir, loaderPath: profile }), /MIMESIS is running/);
+  running = false;
+  await adapter.prepareDoorstop({ gameDir, loaderPath: profile });
+  running = true;
+  await assert.rejects(adapter.launchGame({ gameDir, mode: 'modded', profilePath: profile }), /MIMESIS is running/);
+  await assert.rejects(adapter.removeManagedDoorstop(gameDir), /MIMESIS is running/);
+  running = false;
+  mutate = true;
+  await assert.rejects(adapter.removeManagedDoorstop(gameDir), /files changed/);
+  assert.match((await fs.readFile(path.join(gameDir, 'version.dll'))).toString('utf8'), /external change/);
+  assert.deepEqual(launched, []);
+});
+
+test('MelonLoader setup rolls back owned metadata and preserves a concurrently created proxy', WINDOWS_ONLY, async t => {
+  const { root, gameDir, adapter } = await fixture(t, { gameId: 'mimesis',
+    assertClosed: game => write(path.join(game, 'version.dll'), 'concurrent external proxy'),
+  });
+  const profile = await stageMelonLoader(root);
+  await assert.rejects(adapter.prepareDoorstop({ gameDir, loaderPath: profile }), /did not overwrite/);
+  assert.equal(await fs.readFile(path.join(gameDir, 'version.dll'), 'utf8'), 'concurrent external proxy');
+  for (const file of ['dobby.dll', '.ember-melonloader.json']) await assert.rejects(fs.stat(path.join(gameDir, file)), { code: 'ENOENT' });
 });

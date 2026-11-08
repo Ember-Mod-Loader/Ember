@@ -151,10 +151,11 @@ async function downloadPackages(cache, gameId, roots, history, operationId) {
   }
 
   for (const ref of roots) await resolve(ref);
-  const loaderName = gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
-  if (['lethal-company', 'repo', 'peak'].includes(gameId) && roots.some(ref => !ref.version) &&
-      [...packages.values()].some(mod => mod.namespace === 'BepInEx' && mod.name === loaderName)) {
-    await resolve({ namespace: 'BepInEx', name: loaderName });
+  const loaderNamespace = gameId === 'mimesis' ? 'LavaGang' : 'BepInEx';
+  const loaderName = gameId === 'mimesis' ? 'MelonLoader' : gameId === 'peak' ? 'BepInExPack_PEAK' : 'BepInExPack';
+  if (['lethal-company', 'repo', 'peak', 'mimesis'].includes(gameId) && roots.some(ref => !ref.version) &&
+      [...packages.values()].some(mod => mod.namespace === loaderNamespace && mod.name === loaderName)) {
+    await resolve({ namespace: loaderNamespace, name: loaderName });
   }
   const resolved = [...packages.values()].reverse();
   history.plan(operationId, resolved);

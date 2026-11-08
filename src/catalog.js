@@ -2,13 +2,14 @@ const GAME_DETAILS = [
   ["lethal-company", "Lethal Company", "LC", "1966720", "#df7744", "Co-op scavenging on abandoned moons"],
   ["repo", "R.E.P.O.", "RE", "3241660", "#f07c59", "Physics-based horror and hazardous retrieval"],
   ["peak", "PEAK", "PK", "3527290", "#e6bd58", "Co-op climbing and survival on a mysterious island"],
+  ["mimesis", "MIMESIS", "MI", "2827200", "#9abb86", "Co-op scavenging with creatures that imitate your friends"],
   ["valheim", "Valheim", "VH", "892970", "#6bbb87", "Viking survival in a sprawling world"],
   ["risk-of-rain-2", "Risk of Rain 2", "RR", "632360", "#7c91ff", "An action roguelike with escalating risk"],
 ];
 
 export const GAMES = GAME_DETAILS.map(([id, name, shortName, steamId, color, description]) => ({
   id, name, shortName, steamId, color, description,
-  icon: `./art/game-${id}.${['lethal-company', 'repo', 'peak'].includes(id) ? 'jpg' : 'svg'}`,
+  icon: `./art/game-${id}.${['lethal-company', 'repo', 'peak', 'mimesis'].includes(id) ? 'jpg' : 'svg'}`,
 }));
 
 const COMPANY = "lethal-company";

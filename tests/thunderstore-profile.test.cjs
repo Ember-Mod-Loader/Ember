@@ -39,6 +39,48 @@ test('unsupported profile-relative text files are reported for review rather tha
   assert.match(result.importWarnings[0], /BepInEx\/plugins\/Team-Plugin\/settings.json/);
 });
 
+test('Windows profile separators normalize before validation, including traversal and mixed separator collisions', async () => {
+  const result = await parseThunderstoreProfile(archive([
+    { name: 'config\\', mode: 0o040755 },
+    { name: 'config\\BepInEx.cfg', content: '[Logging]\nEnabled = true' },
+    { name: 'UserData\\Team-Mod\\settings.cfg', content: 'value=true' },
+  ]), 'peak');
+  assert.equal(result.configFiles['BepInEx.cfg'], '[Logging]\nEnabled = true');
+  assert.equal(result.userDataFiles['Team-Mod/settings.cfg'], 'value=true');
+  for (const files of [
+    [{ name: 'config\\..\\outside.cfg', content: 'x' }],
+    [{ name: 'C:\\outside.cfg', content: 'x' }],
+    [{ name: '\\\\server\\outside.cfg', content: 'x' }],
+    [{ name: 'config\\settings.cfg', content: 'x' }, { name: 'config/settings.cfg', content: 'y' }],
+  ]) await assert.rejects(parseThunderstoreProfile(archive(files), 'peak'));
+});
+
+test('MIMESIS native profiles preserve MelonLoader UserData text separately from BepInEx configuration', async () => {
+  const result = await parseThunderstoreProfile(archive([
+    { name: 'UserData/MelonPreferences.cfg', content: '[Crew]\nName = café ☕', deflate: true },
+    { name: 'UserData/Nested/settings.json', content: '{"enabled":true}' },
+    { name: 'config/plugin.cfg', content: 'legacy = true' },
+  ], { profileName: 'MIMESIS friends', mods: [
+    { name: 'LavaGang-MelonLoader', version: { major: 0, minor: 7, patch: 3 } },
+  ] }), 'mimesis');
+  assert.equal(result.gameId, 'mimesis');
+  assert.deepEqual(result.userDataFiles, {
+    'MelonPreferences.cfg': '[Crew]\nName = café ☕', 'Nested/settings.json': '{"enabled":true}',
+  });
+  assert.deepEqual(result.configFiles, { 'plugin.cfg': 'legacy = true' });
+  assert.deepEqual(result.importWarnings, []);
+});
+
+test('MelonLoader UserData rejects executables, case collisions, invalid text and aggregate excess', async () => {
+  for (const files of [
+    [{ name: 'UserData/run.dll', content: 'x' }],
+    [{ name: 'UserData/settings.cfg', content: 'x\0y' }],
+    [{ name: 'UserData/Test.cfg', content: 'x' }, { name: 'userdata/test.cfg', content: 'y' }],
+    Array.from({ length: 129 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x' })),
+    Array.from({ length: 5 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x'.repeat(250 * 1024), deflate: true })),
+  ]) await assert.rejects(() => parseThunderstoreProfile(archive(files), 'mimesis'));
+});
+
 test('malformed, oversized, wrong-game, and noncanonical payloads fail before archive extraction', async () => {
   for (const value of ['', '{}', '#r2modman\n!!!!', '#r2modman\nUEs=', '#r2modman\n' + 'A'.repeat((MAX_ARCHIVE_BYTES + 1) * 4 / 3 | 0)]) {
     await assert.rejects(() => parseThunderstoreProfile(value, gameId));
@@ -62,7 +104,7 @@ test('manifest validation rejects duplicate packages, malformed versions, aliase
 test('archive paths, links, executables, binary files, duplicate manifests, and checksum corruption are rejected', async () => {
   for (const entry of [
     { name: '../escape.cfg', content: 'x' }, { name: '/root.cfg', content: 'x' },
-    { name: 'config\\escape.cfg', content: 'x' }, { name: 'config/NUL.txt', content: 'x' },
+    { name: 'config\\..\\escape.cfg', content: 'x' }, { name: 'config/NUL.txt', content: 'x' },
     { name: 'config/link.cfg', content: 'x', mode: 0o120777 },
     { name: 'config/executable.dll', content: 'x' }, { name: 'plugin.exe', content: 'x' },
     { name: 'config/binary.cfg', content: Buffer.from([0xff, 0xfe]) },
