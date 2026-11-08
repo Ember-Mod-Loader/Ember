@@ -602,7 +602,7 @@ function settingsPage() {
     ${nativeLaunchSupported() ? gameSetupPanel() : ''}
     <section class="settings-panel"><h2>Preferences</h2>
       <div class="settings-row"><div><strong>Wallpaper</strong><p>${esc(WALLPAPERS.find(item => item.id === settings.wallpaper)?.name)} · Choose Ember’s background.</p></div>${button('Wallpapers', null, 'wallpapers')}</div>
-      <div class="settings-row"><div><strong>Codes</strong><p>Unlock wallpapers with an Ember code.</p></div>${button('Codes', null, 'codes')}</div>
+      <div class="settings-row"><div><strong>Codes</strong></div>${button('Codes', null, 'codes')}</div>
       ${nativeLaunchSupported() || !manager.live ? `<div class="settings-row"><div><label for="launch-mode">Default launch mode</label><p>Choose the primary launch button in the sidebar.</p></div><select id="launch-mode" class="field" data-setting="launchMode"><option value="modded"${settings.launchMode === 'modded' ? ' selected' : ''}>Modded</option><option value="vanilla"${settings.launchMode === 'vanilla' ? ' selected' : ''}>Vanilla</option></select></div>` : ''}
       ${settingToggle('confirmRemoval', 'Confirm mod removal', 'Confirm removals from the active profile. Dependency warnings always appear.')}
       ${settingToggle('compactMode', 'Compact mod cards', 'Fit more packages into the catalog by hiding card descriptions.')}
@@ -677,7 +677,7 @@ function renderDialog() {
         <div class="dialog-footer">${button('Done', 'check', 'close-dialog', { style: 'primary' })}</div>`;
       break;
     case 'codes':
-      dialog.innerHTML = `${dialogHeader('Codes', 'Enter a code to unlock a wallpaper.')}
+      dialog.innerHTML = `${dialogHeader('Codes')}
         <form id="dialog-form" class="dialog-form">
           <label for="reward-code">Code<input id="reward-code" class="field reward-code" name="rewardCode" placeholder="Enter your code" maxlength="64" autocomplete="off" autocapitalize="characters" spellcheck="false" required data-initial-focus></label>
           <p class="form-error" role="alert" hidden></p>

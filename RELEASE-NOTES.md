@@ -1,8 +1,6 @@
-# Ember 0.6.2
+# Ember 0.6.3
 
-- Manual client updates now download, install silently, and reopen Ember automatically when active work has finished.
-- Removed the long explanation from the client update dialog.
-- Added **Settings → Codes** for wallpaper unlocks, with a new reward wallpaper. Unlocks persist across profiles, games, and restarts.
+- Removed the wallpaper-specific descriptions from Settings → Codes and the code entry dialog.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
