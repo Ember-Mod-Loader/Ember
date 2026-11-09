@@ -553,6 +553,16 @@ function updateDownloadRecord(record) {
       content.innerHTML = downloadsContent();
     }
   }
+  const importProgress = dialog.open ? dialog.querySelector('.import-progress') : null;
+  if (importProgress?.dataset.downloadId === record.id && record.packages.length) {
+    const count = record.packages.filter(item => item.status === 'complete').length;
+    const meter = importProgress.querySelector('progress');
+    meter.max = record.packages.length;
+    meter.value = count;
+    const label = importProgress.querySelector('span');
+    const message = record.status === 'saving' ? 'Saving your profile…' : `${count} of ${record.packages.length} downloads ready`;
+    if (label.textContent !== message) label.textContent = message;
+  }
   refreshDownloadIndicators();
 }
 
@@ -795,6 +805,7 @@ function renderDialog() {
             <p class="import-note">Choose the game this profile was made for.</p>
           </div>
           <div class="import-review" role="status" hidden></div>
+          <div class="import-progress" hidden><span role="status"></span><progress class="download-progress" aria-label="Profile downloads ready"></progress></div>
           <p class="form-error" role="alert" hidden></p>
           <div class="dialog-footer"><button type="button" class="button" data-action="import-review-back" hidden>Back</button>${button('Cancel', null, 'close-dialog')}<button type="submit" class="button primary">${icon('upload', 16)} Import profile</button></div>
         </form>`;
@@ -1654,14 +1665,17 @@ document.addEventListener('submit', async event => {
         const warnings = Array.isArray(payload.importWarnings) ? payload.importWarnings.filter(item => typeof item === 'string') : [];
         const skippedMods = Array.isArray(payload.skippedMods) ? payload.skippedMods.filter(item => typeof item === 'string') : [];
         if (warnings.length || skippedMods.length) {
-          const hasSkippedMods = skippedMods.length > 0;
-          form.importReview = { content, selection: importSelection(form), hasSkippedMods };
+          const modCount = payload.mods.length;
+          const modLabel = `${modCount} ${modCount === 1 ? 'mod' : 'mods'}`;
+          form.importReview = { content, selection: importSelection(form), label: modCount ? `Import ${modLabel}` : 'Import profile' };
           const review = form.querySelector('.import-review');
-          review.innerHTML = `${hasSkippedMods ? `<strong>Some mods can’t be imported</strong>
-            <p>Ember can import ${payload.mods.length} ${payload.mods.length === 1 ? 'mod' : 'mods'} from this profile. The mods below will be skipped.</p>
+          review.innerHTML = `<strong>${modCount ? `${modLabel} ready to install` : 'No mods in this profile'}</strong>
+            <p>${modCount ? 'Continue to download the mods from Thunderstore and import supported settings.' : 'Continue to import supported settings.'}</p>
+            ${skippedMods.length ? `<p><strong>${skippedMods.length} ${skippedMods.length === 1 ? 'mod' : 'mods'} will be skipped</strong></p>
             <ul>${skippedMods.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
-            ${warnings.length ? `<p><strong>Some files can’t be imported</strong></p>
-              <ul>${warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}`;
+            ${warnings.length ? `<details><summary>Extra files from the profile export</summary>
+              <p>Ember installs each mod from its original package. These extra copies or custom files are skipped.</p>
+              <ul>${warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul></details>` : ''}`;
           review.hidden = false;
           form.querySelector('[data-action="import-review-back"]').hidden = false;
           return;
@@ -1683,9 +1697,15 @@ document.addEventListener('submit', async event => {
         if (!availableGames.some(game => game.id === imported.gameId)) throw new Error('Choose a profile for a supported game.');
         ui.downloading = true;
         submit.innerHTML = `${icon('clock', 16)} Importing profile…`;
-        notify('Downloading the packages for this profile…');
+        const progress = form.querySelector('.import-progress');
+        const review = form.querySelector('.import-review');
         try {
           const context = downloadContext(workspace, { ...imported, id: `import-${crypto.randomUUID()}` }, `Import ${imported.name}`);
+          progress.dataset.downloadId = context.id;
+          progress.querySelector('progress').removeAttribute('value');
+          progress.querySelector('span').textContent = imported.mods.length ? 'Preparing downloads…' : 'Saving your profile…';
+          progress.hidden = false;
+          review.hidden = true;
           try {
             const archives = await desktop.downloadPackages(imported.gameId, imported.mods.map(entry => entry.package), context, source === 'thunderstore');
             if (!form.isConnected || !dialog.open || manager !== workspace) throw new Error('Profile import cancelled.');
@@ -1697,6 +1717,9 @@ document.addEventListener('submit', async event => {
           }
           ui.feed = emptyFeed();
         } finally {
+          delete progress.dataset.downloadId;
+          progress.hidden = true;
+          review.hidden = !form.importReview;
           ui.downloading = false;
           render();
         }
@@ -1713,7 +1736,7 @@ document.addEventListener('submit', async event => {
     field.textContent = errorMessage(error);
   } finally {
     submit.disabled = false;
-    submit.innerHTML = form.importReview ? `${icon('upload', 16)} ${form.importReview.hasSkippedMods ? 'Import available mods' : 'Import supported files'}`
+    submit.innerHTML = form.importReview ? `${icon('upload', 16)} ${esc(form.importReview.label)}`
       : form.elements.namedItem('importSource') ? `${icon('upload', 16)} Import profile` : submitLabel;
     for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = Boolean(form.importReview);
   }

@@ -388,6 +388,10 @@ dialog::backdrop { background: #08080bcc; }
 .import-review strong { color: #ffdb9d; }
 .import-review p { margin: 6px 0; }
 .import-review ul { margin: 8px 0 0; padding-left: 20px; max-height: 160px; overflow-y: auto; overflow-wrap: anywhere; }
+.import-review details { margin-top: 10px; }
+.import-review summary { cursor: pointer; font-weight: 750; }
+.import-progress { margin: 12px 0; color: var(--ink); font-size: 12px; }
+.import-progress progress { display: block; margin-top: 6px; }
 .dialog-form .dialog-footer { margin: 13px -17px -13px; }
 .field { min-width: 0; color: var(--ink); background: #141317; border: 1px solid #6d4b32; border-radius: 7px; padding: 7px 9px; }
 .code-field { width: 100%; resize: vertical; font: 500 11px/1.55 Consolas, monospace; }
