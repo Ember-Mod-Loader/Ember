@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('modRelayDesktop', {
   resolveThunderstoreProfile: (code, gameId) => ipcRenderer.invoke('modrelay:resolve-thunderstore-profile', code, gameId),
   fetchCatalog: options => ipcRenderer.invoke('modrelay:catalog', options),
   fetchPackage: (gameId, namespace, name) => ipcRenderer.invoke('modrelay:package-details', gameId, namespace, name),
+  fetchPackageUpdate: (gameId, namespace, name) => ipcRenderer.invoke('modrelay:package-update', gameId, namespace, name),
   downloadPackages: (gameId, refs, context) => ipcRenderer.invoke('modrelay:download-packages', gameId, refs, context),
   downloadHistory: () => ipcRenderer.invoke('modrelay:download-history'),
   clearCompletedDownloads: gameId => ipcRenderer.invoke('modrelay:clear-completed-downloads', gameId),

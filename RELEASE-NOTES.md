@@ -1,8 +1,8 @@
-# Ember 0.6.5
+# Ember 0.6.6
 
-- Manual client updates now wait for you to choose Install and restart after the download is ready.
-- Checking for updates in Settings also stops a pending automatic restart from a late startup download.
-- Once confirmed, installation stays silent and Ember reopens automatically. Startup updates keep their automatic behavior.
+- Ember checks for mod updates when you open a profile and periodically while the app is open.
+- Profiles with outdated mods show the available versions and let you choose Update now or Wait.
+- Known updates stay visible in Installed mods after a restart or an unavailable network check.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

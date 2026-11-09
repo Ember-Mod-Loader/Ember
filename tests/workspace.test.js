@@ -3,6 +3,7 @@ import test from "node:test";
 import { createManager } from "../src/model.js";
 
 const gameId = "lethal-company";
+const latestVersionsKey = "modrelay:latest-versions:v1";
 
 function memoryStorage() {
   const entries = new Map();
@@ -471,6 +472,103 @@ test("live update checks compare numeric versions and favorites persist offline"
   const reloaded = createManager(storage, { live: true });
   assert.deepEqual(reloaded.state.favorites, [latest.id]);
   assert.equal(reloaded.packageById(latest.id).version, latest.version);
+});
+
+test("known mod updates survive restarting and switching profiles without changing installed data", () => {
+  const storage = memoryStorage();
+  const workspace = createManager(storage, { live: true });
+  const mod = thunderstorePackage("Plugin", "1.9.0");
+  const profileId = workspace.profile.id;
+  workspace.recordDownloads(profileId, gameId, [mod], [mod.id]);
+  workspace.setEnabled(mod.id, false);
+  const originalExport = workspace.exportProfile().json;
+  workspace.registerPackages([{ ...mod, version: "1.10.0" }], { checkedLatest: true });
+
+  workspace.createProfile("Another profile");
+  assert.deepEqual(workspace.updates, []);
+  const reloaded = createManager(storage, { live: true });
+  reloaded.switchProfile(profileId);
+  reloaded.registerPackages([mod, { ...mod, version: null }]);
+  const [update] = reloaded.updates;
+  assert.equal(update.latestVersion, "1.10.0");
+  assert.equal(update.version, "1.9.0");
+  assert.equal(update.mod.version, "1.9.0");
+  assert.equal(update.enabled, false);
+  assert.equal(reloaded.exportProfile().json, originalExport);
+
+  reloaded.switchGame("repo");
+  const otherGameMod = thunderstorePackage("Plugin", "1.9.0", [], "repo");
+  reloaded.recordDownloads(reloaded.profile.id, "repo", [otherGameMod], [otherGameMod.id]);
+  assert.deepEqual(reloaded.updates, []);
+  reloaded.switchGame(gameId);
+  assert.equal(reloaded.updates[0].latestVersion, "1.10.0");
+});
+
+test("a successful version check can retract an update without replacing full package details", () => {
+  const storage = memoryStorage();
+  const workspace = createManager(storage, { live: true });
+  const installed = thunderstorePackage("Plugin", "1.0.0");
+  const latest = thunderstorePackage("Plugin", "2.0.0", [thunderstorePackage("Runtime", "3.0.0")]);
+  workspace.recordDownloads(workspace.profile.id, gameId, [installed], [installed.id]);
+  workspace.registerPackages([latest]);
+  workspace.registerPackages([{ ...latest, dependencies: [] }], { checkedLatest: true });
+  assert.equal(workspace.packageById(installed.id).dependencies[0].name, "Runtime");
+  assert.equal(workspace.updates[0].latestVersion, "2.0.0");
+
+  workspace.registerPackages([installed], { checkedLatest: true });
+  workspace.registerPackages([latest]);
+  assert.deepEqual(workspace.updates, []);
+  assert.deepEqual(createManager(storage, { live: true }).updates, []);
+});
+
+test("catalog versions become durable once installed and are discarded after the last profile removes them", () => {
+  const storage = memoryStorage();
+  const workspace = createManager(storage, { live: true });
+  const mod = thunderstorePackage("Plugin", "1.0.0");
+  const latest = { ...mod, version: "2.0.0" };
+  const source = createManager(memoryStorage(), { live: true });
+  source.recordDownloads(source.profile.id, gameId, [mod], [mod.id]);
+
+  workspace.registerPackages([latest, thunderstorePackage("Uninstalled", "9.0.0")]);
+  assert.equal(storage.getItem(latestVersionsKey), null);
+  const imported = workspace.importProfile(source.exportProfile().code, [mod]);
+  const reloaded = createManager(storage, { live: true });
+  assert.equal(reloaded.updates[0].latestVersion, "2.0.0");
+  const copy = reloaded.cloneProfile(imported.id, "Copy");
+  reloaded.remove(mod.id);
+  reloaded.switchProfile(imported.id);
+  assert.equal(reloaded.updates[0].latestVersion, "2.0.0");
+  reloaded.deleteProfile(imported.id);
+  reloaded.switchProfile(copy.id);
+  assert.deepEqual(JSON.parse(storage.getItem(latestVersionsKey)), []);
+});
+
+test("invalid cache entries and failed cache writes leave installed packages usable", () => {
+  const storage = memoryStorage();
+  const workspace = createManager(storage, { live: true });
+  const mod = thunderstorePackage("Plugin", "1.0.0");
+  workspace.recordDownloads(workspace.profile.id, gameId, [mod], [mod.id]);
+  storage.setItem(latestVersionsKey, JSON.stringify([[mod.id, "invalid"], ["unknown", "99.0.0"], null]));
+  const reloaded = createManager(storage, { live: true });
+  assert.equal(reloaded.installed[0].latestVersion, "1.0.0");
+
+  let cacheWrites = 0;
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key === latestVersionsKey) {
+      cacheWrites++;
+      throw new Error("storage full");
+    }
+    setItem(key, value);
+  };
+  const latest = { ...mod, version: "2.0.0" };
+  reloaded.registerPackages([latest], { checkedLatest: true });
+  reloaded.registerPackages([latest], { checkedLatest: true });
+  assert.equal(cacheWrites, 1);
+  assert.equal(reloaded.updates[0].latestVersion, "2.0.0");
+  reloaded.setEnabled(mod.id, false);
+  assert.equal(reloaded.updates[0].enabled, false);
+  assert.equal(createManager(storage, { live: true }).installed[0].enabled, false);
 });
 
 test("package tags and status survive installed profile reloads and sharing", () => {

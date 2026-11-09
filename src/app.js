@@ -5,6 +5,7 @@ import { GAMES, getGame } from './catalog.js';
 import { createManager, MAX_IMPORT_LENGTH, PROFILE_NAME_LIMIT, WALLPAPERS } from './model.js';
 import { icon } from './icons.js';
 import { createStartupUpdateFlow } from './startup-updates.js';
+import { createModUpdateScanner } from './mod-update-scanner.js';
 
 const desktop = window.modRelayDesktop;
 const CLIENT_VERSION = __APP_VERSION__;
@@ -29,7 +30,11 @@ const compactNumber = new Intl.NumberFormat('en', { notation: 'compact', maximum
 const displayTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
-const ui = { page: 'browse', query: '', category: '', sort: '', showDeprecated: false, library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, checkingUpdates: false, gameStatus: undefined, gameBusy: false, downloads: [] };
+const ui = { page: 'browse', query: '', category: '', sort: '', showDeprecated: false, library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, gameStatus: undefined, gameBusy: false, downloads: [] };
+const fetchModUpdate = desktop?.fetchPackageUpdate ?? desktop?.fetchPackage;
+const modUpdateScanner = fetchModUpdate && createModUpdateScanner({ fetchPackage: fetchModUpdate });
+let modUpdateVisit;
+let modUpdateWork;
 const startupUpdates = createStartupUpdateFlow({
   start: typeof desktop?.startupClientUpdate === 'function' ? () => desktop.startupClientUpdate() : undefined,
   finish: () => desktop?.finishClientStartup?.(),
@@ -139,10 +144,10 @@ function iconButton(label, glyph, action, id, selected = false) {
   return `<button type="button" class="icon-button${selected ? ' selected' : ''}" aria-label="${esc(label)}" title="${esc(label)}" data-action="${action}"${id !== undefined ? ` data-id="${esc(id)}"` : ''}${action === 'favorite' ? ` aria-pressed="${selected}"` : ''}>${icon(glyph, 17)}</button>`;
 }
 
-function nav(page, count) {
+function nav(page, count, updates = 0) {
   const glyph = pages[page][1];
   const label = pageLabel(page);
-  return `<button type="button" class="nav-item${ui.page === page ? ' current' : ''}" data-action="navigate" data-id="${page}"${ui.page === page ? ' aria-current="page"' : ''}>${icon(glyph, 18)}<span>${label}</span>${count ? `<small>${count}</small>` : ''}</button>`;
+  return `<button type="button" class="nav-item${ui.page === page ? ' current' : ''}" data-action="navigate" data-id="${page}"${ui.page === page ? ' aria-current="page"' : ''}${updates ? ` aria-label="${label}, ${plural(updates, 'update')} available"` : ''}>${icon(glyph, 18)}<span>${label}</span>${updates ? `<small class="nav-update-count" title="${plural(updates, 'update')} available">${icon('refresh', 11)}${updates}</small>` : count ? `<small>${count}</small>` : ''}</button>`;
 }
 
 function render() {
@@ -175,7 +180,7 @@ function render() {
       </div>
       <nav aria-label="Workspace">
         <div class="nav-group"><div class="side-label">LIBRARY</div>
-          ${nav('browse')}${nav('library', installed.length)}${nav('favorites')}${nav('downloads', activeDownloads())}
+          ${nav('browse')}${nav('library', installed.length, updates.length)}${nav('favorites')}${nav('downloads', activeDownloads())}
         </div>
         <div class="nav-group"><div class="side-label">MANAGE</div>
           ${nav('profiles')}${nav('settings')}
@@ -217,6 +222,8 @@ function render() {
     }
   }
   observeCatalog();
+  syncModUpdateVisit();
+  if (modUpdateVisit?.promptPending) queueMicrotask(offerProfileUpdates);
 }
 
 function focusSelector(element) {
@@ -404,10 +411,11 @@ function favoriteMods() {
 
 function libraryPage() {
   const { installed, updates, profile } = manager;
+  const checking = modUpdateWork?.visit.profileId === profile.id;
   const actions = button('Share mods', 'upload', 'export', { id: profile.id }) + (manager.live
     ? button('Open downloads', 'file', 'open-downloads') +
       (updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary', disabled: ui.downloading }) : '') +
-      (installed.length ? button(ui.checkingUpdates ? 'Checking…' : 'Check for updates', 'refresh', 'check-updates', { disabled: ui.checkingUpdates || ui.downloading }) : '')
+      (installed.length ? button(checking ? 'Checking…' : 'Check for updates', 'refresh', 'check-updates', { disabled: checking || ui.downloading || !modUpdateScanner }) : '')
     : updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary' }) : button('Browse mods', 'compass', 'navigate', { id: 'browse' }));
   return `${heading('YOUR COLLECTION', pageLabel('library'), '', actions)}
     <div class="stats-grid">
@@ -432,10 +440,10 @@ function libraryResults() {
     (ui.library === 'disabled' && !entry.enabled) || (ui.library === 'updates' && entry.hasUpdate)
   ));
   if (!mods.length) return empty('layers', manager.installed.length ? 'No matching mods' : 'Your profile is empty', manager.installed.length ? 'Try another filter or search.' : 'Browse the catalog to add mods to this profile.', button('Browse mods', 'compass', 'navigate', { id: 'browse' }));
-  return `<div class="list-panel">${mods.map(({ mod, id, version, enabled, hasUpdate }) => `
+  return `<div class="list-panel">${mods.map(({ mod, id, version, latestVersion, enabled, hasUpdate }) => `
     <article class="list-row">
       <button class="mod-link" type="button" data-action="mod-details" data-id="${esc(id)}">
-        ${modArt(mod, 'list-art')}<span class="mod-identity"><strong>${esc(mod.name)}</strong><small>${esc(mod.author)} · v${esc(version)}</small>${modLabels(manager.packageById(id) ?? mod)}${manager.live ? `<small>${updateDate(manager.packageById(id)?.updatedAt ?? mod.updatedAt)}</small>` : ''}</span>
+        ${modArt(mod, 'list-art')}<span class="mod-identity"><strong>${esc(mod.name)}</strong><small>${esc(mod.author)} · v${esc(version)}</small>${hasUpdate ? `<small class="mod-update-version">v${esc(latestVersion)} available</small>` : ''}${modLabels(manager.packageById(id) ?? mod)}${manager.live ? `<small>${updateDate(manager.packageById(id)?.updatedAt ?? mod.updatedAt)}</small>` : ''}</span>
       </button>
       <div class="row-actions">
         ${hasUpdate ? button('Update', 'refresh', 'update', { id, style: 'small outline-purple', disabled: ui.downloading }) : ''}
@@ -654,6 +662,13 @@ function renderDialog() {
   dialog.classList.toggle('dependency-dialog', ['toggle-dependencies', 'remove-dependencies'].includes(type));
   dialog.classList.toggle('wallpaper-dialog', type === 'wallpapers');
   switch (type) {
+    case 'profile-updates': {
+      const updates = manager.updates;
+      dialog.innerHTML = `${dialogHeader('Mod updates available', `${plural(updates.length, 'mod')} in ${manager.profile.name} ${updates.length === 1 ? 'has an update' : 'have updates'}.`)}
+        <ul class="dialog-list profile-update-list" aria-label="Mods with updates" tabindex="0">${updates.map(({ mod, version, latestVersion }) => `<li>${modArt(mod, 'update-art')}<span><strong>${esc(mod.name)}</strong><small>v${esc(version)} → v${esc(latestVersion)}</small></span></li>`).join('')}</ul>
+        <div class="dialog-footer"><button type="button" class="button" data-action="close-dialog" data-initial-focus>Wait</button>${button('Update now', 'refresh', 'update-profile-now', { style: 'primary', disabled: ui.downloading || !updates.length })}</div>`;
+      break;
+    }
     case 'client-update': {
       const status = ui.clientUpdate;
       const installing = status?.status === 'installing';
@@ -696,6 +711,7 @@ function renderDialog() {
       const installed = manager.installed.find(item => item.id === id);
       const favorite = manager.state.favorites.includes(id);
       const dependencies = mod.dependencies;
+      const latestVersion = installed?.latestVersion ?? mod.version;
       const details = ui.detail?.id === id ? ui.detail : null;
       dialog.innerHTML = `${dialogHeader('Mod details')}
         <div class="detail-body">
@@ -703,7 +719,7 @@ function renderDialog() {
           <p class="detail-description">${esc(mod.description)}</p>
           ${modLabels(mod, true)}
           ${mod.deprecated ? `<p class="deprecated-notice">${icon('info', 17)}<span><strong>Deprecated mod</strong>Marked as deprecated on Thunderstore. It may be outdated or no longer supported.</span></p>` : ''}
-          <dl class="detail-stats"><div><dt>Latest version</dt><dd>${details?.loading ? 'Loading…' : mod.version ? `v${esc(mod.version)}` : 'Unavailable'}</dd></div><div><dt>Thunderstore downloads</dt><dd>${mod.downloads.toLocaleString()}</dd></div></dl>
+          <dl class="detail-stats"><div><dt>Latest version</dt><dd>${latestVersion ? `v${esc(latestVersion)}` : details?.loading ? 'Loading…' : 'Unavailable'}</dd></div><div><dt>Thunderstore downloads</dt><dd>${mod.downloads.toLocaleString()}</dd></div></dl>
           ${manager.live ? `<p class="mod-updated">${updateDate(mod.updatedAt)}</p>` : ''}
           <section class="detail-section"><h4>Dependencies</h4>${dependencies.length
             ? `<div class="dependency-list">${dependencies.map(dep => button(`${dep.name} v${dep.version}`, 'package', 'mod-details', { id: dep.id, end: 'chevron' })).join('')}</div>`
@@ -902,7 +918,10 @@ async function pollRunningGame() {
       ui.gameStatus = { ...ui.gameStatus, statusError: true };
       updateLaunchControls();
     }
-  } finally { runningStatusPolling = false; }
+  } finally {
+    runningStatusPolling = false;
+    offerProfileUpdates();
+  }
 }
 
 function scheduleRunningCheck() {
@@ -1010,11 +1029,16 @@ async function loadCatalog(append = false) {
   try {
     const result = await desktop.fetchCatalog({ gameId, query, sort: sort || 'popular', page, category, showDeprecated });
     if (token !== requestNumber || requestKey !== catalogRequestKey() || ui.page !== 'browse') return;
+    const previousUpdates = manager.updates.length;
     manager.registerPackages(result.mods);
     const mods = new Map((append ? ui.feed.mods : []).map(mod => [mod.id, mod]));
     const added = result.mods.filter(mod => !mods.has(mod.id));
     for (const mod of result.mods) mods.set(mod.id, mod);
     ui.feed = { ...result, mods: [...mods.values()], page, requestKey, loading: false, error: '' };
+    if (manager.updates.length !== previousUpdates) {
+      render();
+      return;
+    }
     if (append) app.querySelector('.mod-grid')?.insertAdjacentHTML('beforeend', added.map(modCard).join(''));
   } catch (error) {
     if (token !== requestNumber || requestKey !== catalogRequestKey() || ui.page !== 'browse') return;
@@ -1082,29 +1106,70 @@ async function downloadLive(mods) {
   }
 }
 
-async function checkUpdates() {
-  if (ui.checkingUpdates) return;
-  const workspace = manager;
-  const entries = workspace.installed;
-  const results = [];
-  ui.checkingUpdates = true;
-  render();
-  try {
-    for (let index = 0; index < entries.length; index += 4) {
-      const batch = await Promise.allSettled(entries.slice(index, index + 4).map(({ mod }) =>
-        desktop.fetchPackage(mod.gameId, mod.namespace, mod.name)));
-      results.push(...batch);
+function currentModUpdateVisit(visit) {
+  return visit && visit === modUpdateVisit && visit.profileId === manager.profile.id && visit.gameId === manager.game.id;
+}
+
+function syncModUpdateVisit() {
+  if (!modUpdateScanner || startup.dataset.ready !== 'true' || currentModUpdateVisit(modUpdateVisit)) return;
+  modUpdateVisit?.controller.abort();
+  const visit = modUpdateVisit = { profileId: manager.profile.id, gameId: manager.game.id, controller: new AbortController(), checked: false, promptPending: false, lastStarted: 0 };
+  void checkUpdates({ visit });
+}
+
+function offerProfileUpdates() {
+  const visit = modUpdateVisit;
+  if (!currentModUpdateVisit(visit) || !visit.promptPending || !startup.hidden || document.hidden ||
+      ui.dialog || dialog.open || ui.downloading || ui.gameBusy || gameIsActive() || ui.clientUpdate?.status === 'installing' || searchComposing) return;
+  visit.promptPending = false;
+  if (manager.updates.length) openDialog('profile-updates', visit);
+}
+
+async function checkUpdates({ manual = false, visit = modUpdateVisit } = {}) {
+  if (!modUpdateScanner || !currentModUpdateVisit(visit)) return;
+  if (modUpdateWork) {
+    if (modUpdateWork.visit === visit) {
+      modUpdateWork.manual ||= manual;
+      return modUpdateWork.promise;
     }
-    const found = results.filter(result => result.status === 'fulfilled').map(result => result.value);
-    workspace.registerPackages(found);
-    const updates = workspace.updates.length;
-    notify(found.length < results.length
-      ? `Found ${plural(updates, 'update')}. Some packages could not be checked.`
-      : updates ? `${plural(updates, 'update')} available.` : 'Your mods are up to date.');
-  } finally {
-    ui.checkingUpdates = false;
-    render();
+    // Let the old visit's last few requests settle before starting another batch.
+    await modUpdateWork.promise;
+    if (currentModUpdateVisit(visit)) return checkUpdates({ manual, visit });
+    return;
   }
+  if (!manual && Date.now() - visit.lastStarted < 30_000) return;
+  const mods = manager.installed.map(entry => entry.mod);
+  if (!mods.length) { visit.checked = true; return; }
+  visit.lastStarted = Date.now();
+  const work = modUpdateWork = { visit, manual, promise: null };
+  work.promise = Promise.resolve().then(async () => {
+    let failed = mods.length;
+    try {
+      const result = await modUpdateScanner.scan(mods, { signal: visit.controller.signal, force: manual });
+      // A completed lookup also applies to any other profile that uses this mod.
+      // Cached replies must not replace newer versions learned since that lookup.
+      manager.registerPackages(result.freshPackages, { checkedLatest: true });
+      failed = result.failed;
+    } finally {
+      modUpdateWork = null;
+      if (currentModUpdateVisit(visit)) {
+        const updates = manager.updates.length;
+        if (!visit.checked) {
+          visit.checked = true;
+          visit.promptPending = updates > 0;
+        }
+        render();
+        if (['mod', 'profile-updates'].includes(ui.dialog?.type)) renderDialog();
+        if (work.manual) notify(failed
+          ? updates ? `${plural(updates, 'update')} available. Some mods could not be checked.` : 'Some mods could not be checked. Try again in a moment.'
+          : updates ? `${plural(updates, 'update')} available.` : 'Your mods are up to date.');
+      }
+    }
+  }).catch(error => {
+    if (work.manual && currentModUpdateVisit(visit)) notify(errorMessage(error), true);
+  });
+  if (ui.page === 'library') render();
+  return work.promise;
 }
 
 function refreshResults() {
@@ -1352,10 +1417,17 @@ async function handleAction(action, id) {
     case 'open-downloads': await desktop.openDownloads(); break;
     case 'clear-completed-downloads': await clearCompletedDownloads(); break;
     case 'open-package-page': await desktop.openPackagePage(mod.url); break;
-    case 'check-updates': await checkUpdates(); break;
+    case 'check-updates': await checkUpdates({ manual: true }); break;
     case 'install':
     case 'update': await downloadLive([mod]); break;
     case 'update-all': await downloadLive(manager.updates.map(entry => entry.mod)); break;
+    case 'update-profile-now': {
+      if (ui.dialog?.type !== 'profile-updates' || !currentModUpdateVisit(ui.dialog.id)) break;
+      const mods = manager.updates.map(entry => entry.mod);
+      navigate('library');
+      await downloadLive(mods);
+      break;
+    }
     case 'favorite':
       manager.toggleFavorite(id);
       refreshWorkspace();
@@ -1650,6 +1722,7 @@ dialog.addEventListener('cancel', event => {
   ui.detail = null;
   reportClientBusy();
 });
+dialog.addEventListener('close', offerProfileUpdates);
 
 document.addEventListener('keydown', event => {
   if (startup.dataset.ready !== 'true' || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' || dialog.open) return;
@@ -1718,10 +1791,12 @@ function revealWorkspace() {
   app.inert = false;
   app.removeAttribute('aria-hidden');
   observeCatalog();
+  syncModUpdateVisit();
   startup.classList.add('leaving');
   window.setTimeout(() => {
     startup.hidden = true;
     document.querySelector('#main')?.focus({ preventScroll: true });
+    offerProfileUpdates();
   }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
 }
 
@@ -1830,5 +1905,16 @@ async function loadDownloadHistory() {
 render();
 void startWorkspace();
 scheduleRunningCheck();
-window.addEventListener('focus', () => { if (startup.dataset.ready === 'true') void pollRunningGame(); });
-window.addEventListener('beforeunload', () => window.clearTimeout(runningStatusTimer), { once: true });
+const modUpdateTimer = window.setInterval(() => { if (!document.hidden) void checkUpdates(); }, 5 * 60_000);
+window.addEventListener('focus', () => {
+  if (startup.dataset.ready === 'true') {
+    void pollRunningGame();
+    offerProfileUpdates();
+    void checkUpdates();
+  }
+});
+window.addEventListener('beforeunload', () => {
+  window.clearTimeout(runningStatusTimer);
+  window.clearInterval(modUpdateTimer);
+  modUpdateVisit?.controller.abort();
+}, { once: true });

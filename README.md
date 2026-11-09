@@ -36,6 +36,7 @@ Ember finds supported games in your Steam libraries. If a game isn't found, choo
 - See package tags and deprecated labels, with an option to include deprecated mods in searches.
 - Install mods and their required packages together.
 - Enable, disable, update, and remove individual mods, with prompts for affected dependencies.
+- See available mod updates in Installed mods. When you open a profile, choose **Update now** or **Wait**.
 - Keep separate profiles and share mod lists from Installed mods or Profiles with an Ember profile code.
 - Follow downloads and launch your game with mods or in vanilla mode.
 - Choose a wallpaper that stays selected across profiles and games.

@@ -115,6 +115,7 @@ h1, h2, h3, h4, p, dl, dd { margin: 0; }
 .nav-item.current { background: linear-gradient(90deg, #6f2b0b, #351b0dd9); border-color: #b74f13; box-shadow: inset 2px 0 #ff9b27; color: #fff5e7; }
 .nav-item.current svg { color: #ffa82e; }
 .nav-item small { margin-left: auto; padding: 0 6px; border-radius: 5px; background: #5d2d11; color: #ffd6b0; line-height: 19px; font-size: 10px; }
+.nav-item .nav-update-count { display: inline-flex; align-items: center; gap: 4px; color: #ffe0bd; background: #763713; white-space: nowrap; }
 .sidebar-bottom { margin-top: auto; padding-top: 22px; }
 .launch-panel { display: grid; gap: 10px; padding: 11px; border: 1px solid #ffc18e2c; border-radius: 11px; background: #271a12d6; box-shadow: 0 8px 24px #12080430; }
 .launch-caption { display: flex; gap: 9px; align-items: center; min-height: 20px; color: #ddd0c2; font: 600 12px/20px "Manrope Variable", sans-serif; }
@@ -126,6 +127,7 @@ h1, h2, h3, h4, p, dl, dd { margin: 0; }
 .launch-actions .launch-button:hover, .launch-options:hover { background: #ffad4f; }
 .launch-options { display: grid; place-items: center; width: 30px; padding: 0; background: var(--purple); color: var(--on-purple); border: 0; border-left: 1px solid #71300660; border-radius: 0 7px 7px 0; }
 .launch-update, .launch-update-text { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 0; margin: 0; min-height: 16px; color: #b9afa5; font-size: 10px; }
+.launch-update { color: #ffba78; font-weight: 750; }
 .launch-update:hover { color: #fff; }
 .sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 13px 2px 0; color: #c0ab99; font-size: 9px; letter-spacing: 1px; }
 
@@ -357,6 +359,13 @@ dialog::backdrop { background: #08080bcc; }
 .dialog-footer > .icon-button { margin-right: auto; }
 .dialog-list, .dialog-form, .detail-body { padding: 13px 17px; }
 .dialog-list { display: grid; gap: 6px; max-height: 55vh; overflow: auto; }
+.profile-update-list { list-style: none; margin: 0; }
+.profile-update-list li { display: flex; align-items: center; gap: 11px; padding: 9px 11px; min-height: 54px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.profile-update-list li span { min-width: 0; }
+.profile-update-list li strong, .profile-update-list li small { display: block; overflow-wrap: anywhere; }
+.profile-update-list li small { color: var(--muted); font-size: 11px; }
+.profile-update-list .update-art { width: 34px; height: 34px; border-radius: 7px; }
+.mod-identity .mod-update-version { color: #ffb978; font-weight: 750; }
 .dialog-row { display: flex; align-items: center; gap: 9px; min-height: 53px; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; text-align: left; background: var(--paper); }
 .dialog-row:hover { background: #302018; border-color: #9b4d23; }
 .dialog-row > span:not(.stat-icon) { flex: 1; min-width: 0; }

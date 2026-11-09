@@ -1,6 +1,6 @@
 # Privacy
 
-Applies to Ember 0.6.5.
+Applies to Ember 0.6.6.
 
 ## On your device
 
@@ -31,6 +31,8 @@ Render receives ordinary connection information, including IP addresses, and may
 Installed Windows clients contact GitHub Releases at startup to check for stable Ember updates and download a newer installer when available. GitHub receives ordinary connection information such as your IP address and the requested release files; profiles and mod lists are not uploaded as part of updating. Portable builds open the GitHub Releases page only when you choose View releases. Update checks do not require a GitHub login or embedded access token.
 
 Using the live catalog sends the selected game, search text, filters, and package requests to Thunderstore. Loading package artwork or downloading ZIPs also connects to Thunderstore's delivery network. Those services receive ordinary connection information such as your IP address. [Thunderstore privacy policy](https://pages.thunderstore.io/p/privacy-policy)
+
+Ember checks the active profile's installed package versions with Thunderstore when you open it and periodically while Ember is open. These lookups request public package identifiers and game communities. The latest known versions are cached locally so update indicators remain visible offline.
 
 Choosing **Create share code** uploads the exported profile to Thunderstore's profile-sharing service. The export includes its name, game, package versions, enabled states, and any settings or configuration text saved in the profile. Anyone with the resulting code can retrieve that export. Profiles are uploaded only when you choose this action. Importing a short code retrieves its profile from Thunderstore. JSON file exports and older offline codes remain available without publishing a profile.
 

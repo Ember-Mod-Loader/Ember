@@ -173,7 +173,7 @@ async function fetchCatalog({ gameId, query = '', sort = 'popular', page = 1, ca
   };
 }
 
-async function fetchPackage(gameId, namespace, name) {
+async function fetchPackageListing(gameId, namespace, name) {
   const communityId = community(gameId);
   packageIdentity(gameId, namespace, name);
   const value = await getJson(`/api/cyberstorm/listing/${communityId}/${namespace}/${name}/`, 3 * 60_000);
@@ -181,6 +181,16 @@ async function fetchPackage(gameId, namespace, name) {
     value.is_nsfw || !validVersion(value.latest_version_number)) {
     throw new Error('Thunderstore has no matching package for this game.');
   }
+  return { communityId, value };
+}
+
+async function fetchPackageUpdate(gameId, namespace, name) {
+  const { communityId, value } = await fetchPackageListing(gameId, namespace, name);
+  return normalizeListing(gameId, communityId, value);
+}
+
+async function fetchPackage(gameId, namespace, name) {
+  const { communityId, value } = await fetchPackageListing(gameId, namespace, name);
   const mod = normalizeListing(gameId, communityId, value);
   if (!Array.isArray(value.dependencies) || value.dependencies.length !== value.dependency_count ||
     value.dependencies.some(ref => !validIdentity(ref?.namespace, ref?.name) || !validVersion(ref?.version_number))) {
@@ -219,4 +229,4 @@ async function fetchPackageVersion(gameId, namespace, name, version) {
   };
 }
 
-module.exports = { fetchCatalog, fetchPackage, fetchPackageVersion };
+module.exports = { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion };

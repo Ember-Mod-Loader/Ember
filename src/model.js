@@ -3,6 +3,9 @@ import { REWARD_WALLPAPERS, readRewardCode, readUnlockedRewards } from "./reward
 
 const STORAGE_KEY = "modrelay:workspace:v1";
 const LIVE_STORAGE_KEY = "modrelay:thunderstore:v1";
+const LATEST_VERSIONS_KEY = "modrelay:latest-versions:v1";
+const MAX_LATEST_VERSIONS = 4096;
+const MAX_LATEST_VERSIONS_LENGTH = 1024 * 1024;
 const PROFILE_FORMAT = "modrelay-profile";
 const CODE_PREFIX = "MR1-";
 export const WALLPAPERS = [
@@ -321,6 +324,59 @@ function decodeProfile(value, live) {
 export function createManager(storage = globalThis.localStorage, { live = false } = {}) {
   let state = loadState(storage, live);
   const packages = new Map();
+  const installedPackageIds = () => new Set(state.profiles.flatMap(profile => profile.mods.map(entry => entry.id)));
+  let installedIds = live ? installedPackageIds() : new Set();
+  const latestVersions = new Map();
+  if (live) {
+    try {
+      const raw = storage?.getItem(LATEST_VERSIONS_KEY);
+      const entries = raw?.length <= MAX_LATEST_VERSIONS_LENGTH ? JSON.parse(raw) : null;
+      if (Array.isArray(entries)) {
+        for (const pair of entries.slice(0, MAX_LATEST_VERSIONS)) {
+          if (!Array.isArray(pair) || pair.length !== 2) continue;
+          const [id, version] = pair;
+          if (installedIds.has(id) && typeof version === "string" && VERSION.test(version)) latestVersions.set(id, version);
+        }
+      }
+    } catch {
+      // The version cache is optional and can be rebuilt by the next check.
+    }
+  }
+
+  function rememberLatestVersion(id, version, checked = false) {
+    if (!version || !installedIds.has(id)) return false;
+    const previous = latestVersions.get(id);
+    if (version === previous || (previous && !checked && !isNewer(previous, version))) return false;
+    latestVersions.delete(id);
+    latestVersions.set(id, version);
+    return true;
+  }
+
+  function saveLatestVersions() {
+    while (latestVersions.size > MAX_LATEST_VERSIONS) latestVersions.delete(latestVersions.keys().next().value);
+    try {
+      storage?.setItem(LATEST_VERSIONS_KEY, JSON.stringify([...latestVersions]));
+    } catch {
+      // Keep the observed versions available in memory if disk storage fails.
+    }
+  }
+
+  function syncInstalledIds() {
+    const previousIds = installedIds;
+    installedIds = installedPackageIds();
+    let changed = false;
+    for (const id of latestVersions.keys()) {
+      if (!installedIds.has(id)) {
+        latestVersions.delete(id);
+        changed = true;
+      }
+    }
+    for (const id of installedIds) {
+      if (!previousIds.has(id) && rememberLatestVersion(id, packages.get(id)?.version)) changed = true;
+    }
+    if (changed) saveLatestVersions();
+  }
+
   const activeGame = () => getGame(state.activeGameId);
   const gameProfiles = () => state.profiles.filter(profile => profile.gameId === state.activeGameId);
   const activeProfile = () => gameProfiles().find(profile => profile.id === state.activeProfileIds[state.activeGameId]);
@@ -328,12 +384,13 @@ export function createManager(storage = globalThis.localStorage, { live = false 
   const packageById = id => packages.get(id) ?? snapshot(id) ?? state.favoritePackages[id];
   const installed = () => activeProfile().mods.map(entry => {
     const latest = packageById(entry.id);
+    const latestVersion = latestVersions.get(entry.id) ?? (latest?.version || entry.version);
     const snapshotMod = entry.package ?? latest;
     const mod = live && latest && snapshotMod ? { ...snapshotMod,
       category: latest.category, categories: latest.categories,
       deprecated: latest.deprecated, pinned: latest.pinned, nsfw: latest.nsfw,
     } : snapshotMod;
-    return { ...entry, mod, hasUpdate: Boolean(latest?.version && isNewer(entry.version, latest.version)) };
+    return { ...entry, mod, latestVersion, hasUpdate: isNewer(entry.version, latestVersion) };
   });
 
   function commit(change, type, message, profile = activeProfile()) {
@@ -351,6 +408,7 @@ export function createManager(storage = globalThis.localStorage, { live = false 
       throw new Error("Ember could not save the workspace. Check that local storage is available.");
     }
     state = next;
+    if (live) syncInstalledIds();
     return result;
   }
 
@@ -466,13 +524,24 @@ export function createManager(storage = globalThis.localStorage, { live = false 
     get updates() { return installed().filter(entry => entry.hasUpdate); },
     get wallpapers() { return structuredClone(WALLPAPERS.filter(wallpaper => !wallpaper.rewardId || state.unlockedRewards.includes(wallpaper.rewardId))); },
     packageById,
-    registerPackages(list) {
+    registerPackages(list, { checkedLatest = false } = {}) {
+      let changed = false;
       for (const raw of list) {
+        if (checkedLatest) {
+          // A version check does not include a full dependency list.
+          const { id, version } = readReference(raw, raw.gameId);
+          if (rememberLatestVersion(id, version, true)) changed = true;
+          continue;
+        }
         const mod = readPackage(raw, raw.gameId, true);
         const existing = packages.get(mod.id);
         if (existing?.version && (!mod.version || isNewer(mod.version, existing.version))) continue;
         packages.set(mod.id, mod);
+        // Replaying the same catalog version cannot undo a later explicit check.
+        if ((mod.version !== existing?.version || !latestVersions.has(mod.id)) &&
+            rememberLatestVersion(mod.id, mod.version)) changed = true;
       }
+      if (changed) saveLatestVersions();
     },
     get configs() {
       const profile = activeProfile();

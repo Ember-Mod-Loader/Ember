@@ -85,6 +85,54 @@ test('package details recover exact dependency versions from the version API', a
   ]);
 });
 
+test('update lookups share the latest listing cache without fetching dependency details', async t => {
+  const api = service(t, ({ pathname }) => pathname.includes('/listing/')
+    ? Response.json(listing({ dependency_count: 1, dependencies: [], is_deprecated: true }))
+    : Response.json({
+      namespace: 'Team-Name',
+      name: 'Plugin',
+      version_number: '1.2.3',
+      is_active: true,
+      dependencies: ['Shared-Team-Runtime-2.10.0'],
+    }));
+  const args = [gameId, 'Team-Name', 'Plugin'];
+  const [first, second] = await Promise.all([api.fetchPackageUpdate(...args), api.fetchPackageUpdate(...args)]);
+
+  assert.deepEqual(first, second);
+  assert.equal(first.id, 'lethal-company/Team-Name/Plugin');
+  assert.equal(first.version, '1.2.3');
+  assert.equal(first.deprecated, true);
+  assert.deepEqual(first.dependencies, []);
+  assert.deepEqual(api.requests.map(url => url.pathname), [
+    '/api/cyberstorm/listing/lethal-company/Team-Name/Plugin/',
+  ]);
+
+  const full = await api.fetchPackage(...args);
+  assert.equal(full.dependencies[0].version, '2.10.0');
+  assert.deepEqual({ ...full, dependencies: [] }, first);
+  assert.deepEqual(api.requests.map(url => url.pathname), [
+    '/api/cyberstorm/listing/lethal-company/Team-Name/Plugin/',
+    '/api/experimental/package/Team-Name/Plugin/1.2.3/',
+  ]);
+});
+
+test('update lookups reject mismatched, restricted, or unversioned listings', async t => {
+  const api = service(t, ({ pathname }) => Response.json(listing({
+    name: 'WrongPlugin',
+    ...({
+      OtherGame: { community_identifier: 'repo', name: 'OtherGame' },
+      OtherTeam: { namespace: 'Other-Team', name: 'OtherTeam' },
+      Restricted: { name: 'Restricted', is_nsfw: true },
+      BadVersion: { name: 'BadVersion', latest_version_number: 'unknown' },
+    })[pathname.split('/').at(-2)],
+  })));
+
+  for (const name of ['Plugin', 'OtherGame', 'OtherTeam', 'Restricted', 'BadVersion']) {
+    await assert.rejects(() => api.fetchPackageUpdate(gameId, 'Team-Name', name), /no matching package/);
+  }
+  assert.equal(api.requests.length, 5);
+});
+
 test('deprecated search is opt-in, keeps tag/status metadata, and does not include NSFW packages', async t => {
   const api = service(t, ({ pathname, searchParams }) => pathname.endsWith('/filters/')
     ? Response.json({ package_categories: [] })
@@ -124,6 +172,7 @@ test('invalid queries, package identities, and versions do not send network requ
   await assert.rejects(() => api.fetchCatalog({ gameId, page: 0 }), /invalid Thunderstore search/i);
   await assert.rejects(() => api.fetchCatalog({ gameId, category: '1&evil' }), /invalid Thunderstore search/i);
   await assert.rejects(() => api.fetchPackage(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
+  await assert.rejects(() => api.fetchPackageUpdate(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
   await assert.rejects(() => api.fetchPackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
   assert.deepEqual(api.requests, []);
 });

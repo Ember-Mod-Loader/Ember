@@ -4,7 +4,7 @@ const { mkdirSync, existsSync } = require('node:fs');
 const { rename, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { fetchCatalog, fetchPackage, fetchPackageVersion } = require('./thunderstore.cjs');
+const { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion } = require('./thunderstore.cjs');
 const { createPackageCache } = require('./packages.cjs');
 const { registerGameActions } = require('./game-actions.cjs');
 const { createDownloadHistory } = require('./download-history.cjs');
@@ -331,6 +331,7 @@ if (!app.requestSingleInstanceLock()) {
     handle('resolve-thunderstore-profile', (code, gameId) => sharing.resolveThunderstoreProfile(code, gameId));
     handle('catalog', fetchCatalog);
     handle('package-details', fetchPackage);
+    handle('package-update', fetchPackageUpdate);
     handle('download-history', () => history.list());
     handle('clear-completed-downloads', gameId => history.clearCompleted(gameId));
     handle('finish-download', (id, error, profile) => error ? history.fail(id, error) : history.complete(id, profile));
