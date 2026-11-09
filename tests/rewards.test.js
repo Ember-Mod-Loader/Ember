@@ -54,6 +54,32 @@ test("the legacy First Flame code reports already unlocked without changing or w
   assert.deepEqual(manager.state, before);
 });
 
+test("Sauce Sipper stays hidden until redeemed and remains unlocked across reloads", () => {
+  const saved = storage();
+  const manager = createManager(saved, { live: true });
+  assert.equal(manager.wallpapers.some(wallpaper => wallpaper.id === "sauce-sipper"), false);
+  assert.throws(() => manager.setSetting("wallpaper", "sauce-sipper"), /unlock/i);
+  assert.throws(() => manager.redeemCode("Sauces"), /code wasn't found/i);
+  assert.equal(saved.writes, 0);
+
+  const reward = manager.redeemCode("  sAuCe  ");
+  assert.equal(reward.status, "unlocked");
+  assert.equal(reward.wallpaper.id, "sauce-sipper");
+  assert.equal(reward.wallpaper.name, "Sauce Sipper");
+  assert.equal(manager.state.settings.wallpaper, "main");
+  assert.equal(manager.wallpapers.filter(wallpaper => wallpaper.id === reward.wallpaper.id).length, 1);
+  assert.equal(saved.writes, 1);
+
+  manager.setSetting("wallpaper", reward.wallpaper.id);
+  const reloaded = createManager(saved, { live: true });
+  assert.equal(reloaded.state.settings.wallpaper, "sauce-sipper");
+  assert.deepEqual(reloaded.state.unlockedRewards, ["sauce-sipper"]);
+  assert(reloaded.wallpapers.some(wallpaper => wallpaper.id === "sauce-sipper"));
+  const writes = saved.writes;
+  assert.equal(reloaded.redeemCode("SAUCE").status, "already-unlocked");
+  assert.equal(saved.writes, writes);
+});
+
 test("invalid or oversized codes leave the workspace unchanged", () => {
   const saved = storage();
   const manager = createManager(saved, { live: true });
@@ -68,14 +94,15 @@ test("invalid or oversized codes leave the workspace unchanged", () => {
 
 test("profile sharing leaves wallpaper preferences and reward state on each client", () => {
   const source = createManager(storage(), { live: true });
-  source.setSetting("wallpaper", "first-flame");
+  source.redeemCode("Sauce");
+  source.setSetting("wallpaper", "sauce-sipper");
   const exported = source.exportProfile();
   const payload = JSON.parse(exported.json);
   assert.equal(Object.hasOwn(payload, "unlockedRewards"), false);
   assert.equal(Object.hasOwn(payload, "settings"), false);
   const target = createManager(storage(), { live: true });
-  payload.unlockedRewards = ["first-flame"];
-  payload.settings = { wallpaper: "first-flame" };
+  payload.unlockedRewards = ["sauce-sipper"];
+  payload.settings = { wallpaper: "sauce-sipper" };
   target.importProfile(JSON.stringify(payload));
   assert.deepEqual(target.state.unlockedRewards, []);
   assert.equal(target.state.settings.wallpaper, "main");

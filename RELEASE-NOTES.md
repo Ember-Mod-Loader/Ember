@@ -1,8 +1,8 @@
-# Ember 0.6.6
+# Ember 0.6.7
 
-- Ember checks for mod updates when you open a profile and periodically while the app is open.
-- Profiles with outdated mods show the available versions and let you choose Update now or Wait.
-- Known updates stay visible in Installed mods after a restart or an unavailable network check.
+- Thunderstore profile imports list unavailable mods and any mods that depend on them. Review the list and choose **Import available mods** to continue.
+- The import keeps the available versions, enabled and disabled choices, and supported configuration files from the shared profile.
+- Added an unlockable wallpaper.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

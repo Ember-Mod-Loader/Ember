@@ -166,6 +166,58 @@ test('exact-version downloads reuse cached listing tags and flags without an ext
   assert.equal(api.requests.length, 2);
 });
 
+test('profile lookups require the game listing, reuse its latest version, and resolve only the requested older version', async t => {
+  const api = service(t, ({ pathname }) => {
+    if (pathname.includes('/listing/')) {
+      return Response.json(listing(pathname.includes('/OldPlugin/')
+        ? { name: 'OldPlugin', dependency_count: 1, dependencies: [] }
+        : { dependency_count: 0, dependencies: [] }));
+    }
+    assert.equal(pathname, '/api/experimental/package/Team-Name/OldPlugin/1.0.0/');
+    return Response.json({
+      namespace: 'Team-Name', name: 'OldPlugin', version_number: '1.0.0', is_active: true,
+      dependencies: ['Shared-Team-Runtime-2.10.0'],
+    });
+  });
+  const latest = await api.fetchListedPackageVersion(gameId, 'Team-Name', 'Plugin', '1.2.3');
+  assert.equal(latest.version, '1.2.3');
+  const older = await api.fetchListedPackageVersion(gameId, 'Team-Name', 'OldPlugin', '1.0.0');
+  assert.equal(older.version, '1.0.0');
+  assert.equal(older.dependencies[0].version, '2.10.0');
+  assert.deepEqual(api.requests.map(url => url.pathname), [
+    '/api/cyberstorm/listing/lethal-company/Team-Name/Plugin/',
+    '/api/cyberstorm/listing/lethal-company/Team-Name/OldPlugin/',
+    '/api/experimental/package/Team-Name/OldPlugin/1.0.0/',
+  ]);
+});
+
+test('profile lookups distinguish unavailable packages from unexpected metadata and service failures', async t => {
+  const api = service(t, ({ pathname }) => {
+    const scoped = pathname.includes('/listing/');
+    const name = pathname.split('/').at(scoped ? -2 : -3);
+    if (scoped) {
+      if (name === 'Unlisted') return new Response(null, { status: 404 });
+      if (name === 'ServiceError') return new Response(null, { status: 503 });
+      return Response.json(listing({ name, is_nsfw: name === 'Restricted',
+        community_identifier: name === 'OtherGame' ? 'repo' : gameId }));
+    }
+    if (name === 'UnknownVersion') return new Response(null, { status: 404 });
+    return Response.json({
+      namespace: 'Team-Name', name, version_number: '1.0.0',
+      is_active: name === 'InactiveVersion' ? false : 'no', dependencies: [],
+    });
+  });
+  const lookup = name => api.fetchListedPackageVersion(gameId, 'Team-Name', name, '1.0.0');
+  for (const name of ['Unlisted', 'Restricted', 'UnknownVersion', 'InactiveVersion']) {
+    await assert.rejects(() => lookup(name), api.ThunderstorePackageUnavailableError);
+  }
+  assert(api.requests.every(({ pathname }) => !pathname.includes('/api/experimental/package/Team-Name/Unlisted/') &&
+    !pathname.includes('/api/experimental/package/Team-Name/Restricted/')));
+  for (const name of ['ServiceError', 'OtherGame', 'MalformedVersion']) {
+    await assert.rejects(() => lookup(name), error => !(error instanceof api.ThunderstorePackageUnavailableError));
+  }
+});
+
 test('invalid queries, package identities, and versions do not send network requests', async t => {
   const api = service(t, () => assert.fail('unexpected network request'));
   await assert.rejects(() => api.fetchCatalog({ gameId: '../another-game' }), /does not support/);
@@ -174,6 +226,7 @@ test('invalid queries, package identities, and versions do not send network requ
   await assert.rejects(() => api.fetchPackage(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
   await assert.rejects(() => api.fetchPackageUpdate(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
   await assert.rejects(() => api.fetchPackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
+  await assert.rejects(() => api.fetchListedPackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
   assert.deepEqual(api.requests, []);
 });
 

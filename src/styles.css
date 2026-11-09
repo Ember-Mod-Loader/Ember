@@ -30,6 +30,7 @@ html[data-wallpaper="obsidian"] { --wallpaper-image: url("/art/ember-obsidian.pn
 html[data-wallpaper="crimson-dunes"] { --wallpaper-image: url("/art/ember-crimson-dunes.png"); }
 html[data-wallpaper="solar-drift"] { --wallpaper-image: url("/art/ember-solar-drift.png"); }
 html[data-wallpaper="first-flame"] { --wallpaper-image: url("/art/ember-first-flame.svg"); }
+html[data-wallpaper="sauce-sipper"] { --wallpaper-image: url("/art/ember-sauce-sipper.webp"); }
 
 *, *::before, *::after { box-sizing: border-box; }
 * { scrollbar-width: none; }

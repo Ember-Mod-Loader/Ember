@@ -22,6 +22,14 @@ const cache = new Map();
 const pending = new Map();
 let retryAt = 0;
 
+class ThunderstoreNotFoundError extends Error {}
+class ThunderstorePackageUnavailableError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ThunderstorePackageUnavailableError';
+  }
+}
+
 function community(gameId) {
   const identifier = COMMUNITIES.get(gameId);
   if (!identifier) throw new Error('Thunderstore does not support this game in Ember.');
@@ -123,7 +131,7 @@ async function request(url) {
     retryAt = Date.now() + Math.min(60000, Math.max(1000, delay || 10000));
     throw new Error('Thunderstore is limiting requests. Wait a moment, then try again.');
   }
-  if (response.status === 404) throw new Error('Thunderstore could not find this package or catalog page.');
+  if (response.status === 404) throw new ThunderstoreNotFoundError('Thunderstore could not find this package or catalog page.');
   if (!response.ok) throw new Error(`Thunderstore is unavailable right now (HTTP ${response.status}).`);
   try {
     return await response.json();
@@ -178,9 +186,10 @@ async function fetchPackageListing(gameId, namespace, name) {
   packageIdentity(gameId, namespace, name);
   const value = await getJson(`/api/cyberstorm/listing/${communityId}/${namespace}/${name}/`, 3 * 60_000);
   if (value?.community_identifier !== communityId || value.namespace !== namespace || value.name !== name ||
-    value.is_nsfw || !validVersion(value.latest_version_number)) {
+    !validVersion(value.latest_version_number) || (value.is_nsfw !== undefined && typeof value.is_nsfw !== 'boolean')) {
     throw new Error('Thunderstore has no matching package for this game.');
   }
+  if (value.is_nsfw) throw new ThunderstorePackageUnavailableError('Thunderstore has no matching package for this game.');
   return { communityId, value };
 }
 
@@ -191,10 +200,14 @@ async function fetchPackageUpdate(gameId, namespace, name) {
 
 async function fetchPackage(gameId, namespace, name) {
   const { communityId, value } = await fetchPackageListing(gameId, namespace, name);
+  return packageFromListing(gameId, communityId, value);
+}
+
+async function packageFromListing(gameId, communityId, value) {
   const mod = normalizeListing(gameId, communityId, value);
   if (!Array.isArray(value.dependencies) || value.dependencies.length !== value.dependency_count ||
     value.dependencies.some(ref => !validIdentity(ref?.namespace, ref?.name) || !validVersion(ref?.version_number))) {
-    const exact = await fetchPackageVersion(gameId, namespace, name, mod.version);
+    const exact = await fetchPackageVersion(gameId, mod.namespace, mod.name, mod.version);
     return { ...mod, dependencies: exact.dependencies };
   }
   const dependencies = value.dependencies.map(ref => ({
@@ -203,14 +216,39 @@ async function fetchPackage(gameId, namespace, name) {
   return { ...mod, dependencies };
 }
 
+async function fetchListedPackageVersion(gameId, namespace, name, version) {
+  if (!validVersion(version)) throw new Error('Invalid Thunderstore package version.');
+  let listing;
+  try {
+    listing = await fetchPackageListing(gameId, namespace, name);
+  } catch (error) {
+    if (error instanceof ThunderstoreNotFoundError) {
+      throw new ThunderstorePackageUnavailableError('Thunderstore no longer lists this mod for the selected game.');
+    }
+    throw error;
+  }
+  try {
+    if (listing.value.latest_version_number === version) {
+      return await packageFromListing(gameId, listing.communityId, listing.value);
+    }
+    return await fetchPackageVersion(gameId, namespace, name, version);
+  } catch (error) {
+    if (error instanceof ThunderstoreNotFoundError) {
+      throw new ThunderstorePackageUnavailableError(`Thunderstore does not have an active ${namespace}/${name} v${version} download.`);
+    }
+    throw error;
+  }
+}
+
 async function fetchPackageVersion(gameId, namespace, name, version) {
   const communityId = community(gameId);
   const identity = packageIdentity(gameId, namespace, name);
   if (!validVersion(version)) throw new Error('Invalid Thunderstore package version.');
   const value = await getJson(`/api/experimental/package/${namespace}/${name}/${version}/`, 15 * 60_000);
-  if (value?.namespace !== namespace || value.name !== name || value.version_number !== version || value.is_active !== true) {
-    throw new Error(`Thunderstore does not have an active ${namespace}/${name} v${version} download.`);
+  if (value?.namespace !== namespace || value.name !== name || value.version_number !== version || typeof value.is_active !== 'boolean') {
+    throw new Error(`Thunderstore returned invalid metadata for ${namespace}/${name} v${version}.`);
   }
+  if (!value.is_active) throw new ThunderstorePackageUnavailableError(`Thunderstore does not have an active ${namespace}/${name} v${version} download.`);
   // Exact-version responses may omit community metadata. Reuse a listing already
   // fetched for this package without adding requests to profile downloads.
   const listing = cache.get(`/api/cyberstorm/listing/${communityId}/${namespace}/${name}/`)?.body;
@@ -229,4 +267,4 @@ async function fetchPackageVersion(gameId, namespace, name, version) {
   };
 }
 
-module.exports = { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion };
+module.exports = { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion, fetchListedPackageVersion, ThunderstorePackageUnavailableError };

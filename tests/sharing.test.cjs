@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createSharingClient, MAX_PROFILE_BYTES } = require('../electron/sharing.cjs');
+const { ThunderstorePackageUnavailableError } = require('../electron/thunderstore.cjs');
 const { zipFixture } = require('./zip-fixture.cjs');
 const yaml = require('js-yaml');
 
@@ -239,6 +240,43 @@ test('Thunderstore import never silently upgrades explicit versions and chooses 
   assert.equal(result.mods.find(mod => mod.package.name === 'Runtime').version, '2.0.0');
   const conflict = createSharingClient({ fetchImpl: async () => new Response(nativePayload([...rootMods, nativeMod('Team-Runtime', '1.0.0')])), resolvePackage });
   await assert.rejects(() => conflict.resolveThunderstoreProfile(key, 'peak'), /requires Runtime v2.0.0/);
+});
+
+test('Thunderstore import reviews unavailable mods and their dependents, keeping other exact versions and settings', async () => {
+  const roots = [nativeMod('Team-Affected'), nativeMod('Team-Unlisted', '1.2.3'), nativeMod('Team-Available', '2.0.0', false)];
+  const files = [{ name: 'BepInEx/config/settings.cfg', content: 'Keep this' }];
+  const client = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload(roots, files)),
+    resolvePackage: async (gameId, ref) => {
+      if (ref.name === 'Unlisted') throw new ThunderstorePackageUnavailableError('Thunderstore no longer lists this mod for the selected game.');
+      const dependencies = ({
+        Affected: [{ name: 'Middle', version: '1.0.0' }, { name: 'Orphan', version: '1.0.0' }],
+        Middle: [{ name: 'Unlisted', version: '1.2.3' }],
+      })[ref.name] ?? [];
+      return packageFor(gameId, ref, dependencies.map(dependency => ({ namespace: 'Team', ...dependency })));
+    },
+  });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'lethal-company'));
+  assert.deepEqual(result.mods.map(({ package: mod, version, enabled }) => [mod.name, version, enabled]), [['Available', '2.0.0', false]]);
+  assert.deepEqual(result.configFiles, { 'settings.cfg': 'Keep this' });
+  assert.deepEqual(result.skippedMods, [
+    'Team/Affected v1.0.0 — requires unavailable Team/Unlisted v1.2.3.',
+    'Team/Unlisted v1.2.3 — Thunderstore no longer lists this mod for the selected game.',
+  ]);
+  const { createManager } = await import('../src/model.js');
+  const manager = createManager({ getItem: () => null, setItem: () => {} }, { live: true });
+  assert.equal(manager.readImport(JSON.stringify(result)).mods.length, 1);
+});
+
+test('Thunderstore import distinguishes an unavailable profile from retryable service failures', async () => {
+  const payload = nativePayload([nativeMod('Team-Plugin')]);
+  const fetchImpl = async () => new Response(payload);
+  const missing = createSharingClient({ fetchImpl, resolvePackage: async () => {
+    throw new ThunderstorePackageUnavailableError('Not listed for this game.');
+  } });
+  await assert.rejects(() => missing.resolveThunderstoreProfile(key, 'peak'), /None of the mods.*selected the right game/);
+  const offline = createSharingClient({ fetchImpl, resolvePackage: async () => { throw new Error('Thunderstore is unavailable right now (HTTP 503).'); } });
+  await assert.rejects(() => offline.resolveThunderstoreProfile(key, 'peak'), /Could not check Team\/Plugin v1\.0\.0.*HTTP 503/);
 });
 
 test('Thunderstore import validates inputs before network use, preserves Ember-mode checks, and refuses cross-game metadata', async () => {

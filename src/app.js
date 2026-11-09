@@ -1639,7 +1639,7 @@ document.addEventListener('submit', async event => {
       }
       submit.disabled = true;
       for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = true;
-      const source = data.get('importSource');
+      const source = form.elements.namedItem('importSource').value;
       let content = form.importReview?.content;
       if (!content && source === 'thunderstore') {
         if (!desktop?.resolveThunderstoreProfile) throw new Error('Update Ember to import a Thunderstore profile.');
@@ -1652,10 +1652,16 @@ document.addEventListener('submit', async event => {
         if (!form.isConnected || !dialog.open) return;
         const payload = JSON.parse(content);
         const warnings = Array.isArray(payload.importWarnings) ? payload.importWarnings.filter(item => typeof item === 'string') : [];
-        if (warnings.length) {
-          form.importReview = { content, selection: importSelection(form) };
+        const skippedMods = Array.isArray(payload.skippedMods) ? payload.skippedMods.filter(item => typeof item === 'string') : [];
+        if (warnings.length || skippedMods.length) {
+          const hasSkippedMods = skippedMods.length > 0;
+          form.importReview = { content, selection: importSelection(form), hasSkippedMods };
           const review = form.querySelector('.import-review');
-          review.innerHTML = `<strong>Some files can't be imported</strong><p>Review these files before continuing:</p><ul>${warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+          review.innerHTML = `${hasSkippedMods ? `<strong>Some mods can’t be imported</strong>
+            <p>Ember can import ${payload.mods.length} ${payload.mods.length === 1 ? 'mod' : 'mods'} from this profile. The mods below will be skipped.</p>
+            <ul>${skippedMods.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
+            ${warnings.length ? `<p><strong>Some files can’t be imported</strong></p>
+              <ul>${warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}`;
           review.hidden = false;
           form.querySelector('[data-action="import-review-back"]').hidden = false;
           return;
@@ -1681,7 +1687,7 @@ document.addEventListener('submit', async event => {
         try {
           const context = downloadContext(workspace, { ...imported, id: `import-${crypto.randomUUID()}` }, `Import ${imported.name}`);
           try {
-            const archives = await desktop.downloadPackages(imported.gameId, imported.mods.map(entry => entry.package), context);
+            const archives = await desktop.downloadPackages(imported.gameId, imported.mods.map(entry => entry.package), context, source === 'thunderstore');
             if (!form.isConnected || !dialog.open || manager !== workspace) throw new Error('Profile import cancelled.');
             const profile = workspace.importProfile(content, archives);
             await finishDownload(context, null, profile);
@@ -1707,7 +1713,7 @@ document.addEventListener('submit', async event => {
     field.textContent = errorMessage(error);
   } finally {
     submit.disabled = false;
-    submit.innerHTML = form.importReview ? `${icon('upload', 16)} Import supported files`
+    submit.innerHTML = form.importReview ? `${icon('upload', 16)} ${form.importReview.hasSkippedMods ? 'Import available mods' : 'Import supported files'}`
       : form.elements.namedItem('importSource') ? `${icon('upload', 16)} Import profile` : submitLabel;
     for (const field of form.querySelectorAll('input, select, textarea')) field.disabled = Boolean(form.importReview);
   }

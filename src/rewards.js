@@ -1,9 +1,17 @@
 // Keep published codes valid when their rewards become available to everyone.
 const CODES = Object.freeze({
   FIRSTFLAME: Object.freeze({ id: "first-flame", wallpaperId: "first-flame" }),
+  SAUCE: Object.freeze({ id: "sauce-sipper", wallpaperId: "sauce-sipper" }),
 });
 
-export const REWARD_WALLPAPERS = Object.freeze([]);
+export const REWARD_WALLPAPERS = Object.freeze([
+  Object.freeze({
+    id: "sauce-sipper",
+    rewardId: "sauce-sipper",
+    name: "Sauce Sipper",
+    file: "./art/ember-sauce-sipper.webp",
+  }),
+]);
 
 export function readRewardCode(value) {
   if (typeof value !== "string" || value.length > 64) throw new Error("Enter a code up to 64 characters.");
