@@ -1,8 +1,7 @@
-# Ember 0.6.10
+# Ember 0.6.11
 
-- Start another mod download or update while one is running. Each download saves to the profile it started from.
-- Completed download entries clear after 30 seconds. Failed entries stay visible for five minutes so you can read the error.
-- **Clear finished** removes completed and failed entries for the selected game.
+- Thunderstore profile imports show required version changes before you confirm, including the old and proposed versions.
+- When a required upgrade is unavailable, the review identifies affected mods and keeps compatible versions of the remaining mods.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

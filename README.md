@@ -74,7 +74,7 @@ To remove a loader installed by Ember, choose **Remove loader** in the setup pan
 
 Choose **Profiles → Share profile → Create share code** to send a mod list to another Ember user. This uploads the profile to Thunderstore's sharing service. Anyone with the code can import it; creating and resolving codes requires internet access.
 
-In **Import profile**, choose **Ember** for Ember codes or JSON files, or **Thunderstore / r2modman** for a code shared by either manager. For Thunderstore profiles, select the game the profile was made for. Ember downloads the selected package versions and keeps the enabled and disabled choices.
+In **Import profile**, choose **Ember** for Ember codes or JSON files, or **Thunderstore / r2modman** for a code shared by either manager. For Thunderstore profiles, select the game the profile was made for. Ember shows any required version changes or unavailable mods before downloading, and keeps the enabled and disabled choices for the mods it imports.
 
 Supported BepInEx configuration files and MelonLoader UserData text files are imported with the profile and applied when you prepare or launch it. If the archive contains files Ember can't place, it lists them for review before importing the supported files.
 

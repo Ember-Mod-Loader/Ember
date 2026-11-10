@@ -1,7 +1,7 @@
 {
   "name": "modrelay",
   "productName": "Ember",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "private": true,
   "description": "Open-source Thunderstore mod manager for Windows",
   "author": "Ember",

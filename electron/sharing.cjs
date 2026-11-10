@@ -167,105 +167,179 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
     if (!GAME_IDS.has(gameId)) throw new Error('Choose a supported game before importing.');
     try { parseCode(code); } catch { throw new Error('Enter a valid Thunderstore profile code.'); }
     const parsed = await parseThunderstoreProfile(await downloadProfile(code, MAX_NATIVE_PROFILE_BYTES), gameId);
-    const entries = new Map(parsed.mods.map(ref => [`${ref.namespace}/${ref.name}`, { ...ref, explicit: true, mod: null, unavailable: null }]));
-    let requests = 0;
+    const packageKey = ref => `${ref.namespace}/${ref.name}`;
+    const versionKey = ref => `${packageKey(ref)}@${ref.version}`;
+    const versions = new Map();
+    const unavailableUpgrades = new Map();
+    const upgradedPins = new Map();
+    function createEntries() {
+      return new Map(parsed.mods.map(ref => [packageKey(ref), {
+        ...ref, version: upgradedPins.get(packageKey(ref)) ?? ref.version, explicit: true, mod: null, unavailable: null,
+      }]));
+    }
+    let entries = createEntries();
     const newer = (left, right) => {
       const a = left.split('.').map(Number), b = right.split('.').map(Number);
       for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] > b[index];
       return false;
     };
-    while (true) {
-      const batch = [...entries.values()].filter(entry => !entry.mod && !entry.unavailable).slice(0, 3);
-      if (!batch.length) break;
-      const resolved = await Promise.all(batch.map(async entry => {
-        if (++requests > 1000) throw new Error('The profile has too many dependency version changes.');
-        const ref = { namespace: entry.namespace, name: entry.name, version: entry.version };
+    function resolveVersion(ref) {
+      const key = versionKey(ref);
+      if (versions.has(key)) return versions.get(key);
+      if (versions.size >= 1000) throw new Error('The profile has too many dependency version changes.');
+      const result = (async () => {
         let mod;
         try {
           mod = await resolvePackage(gameId, ref);
         } catch (error) {
-          if (error instanceof ThunderstorePackageUnavailableError) return { entry, ref, unavailable: error.message };
+          if (error instanceof ThunderstorePackageUnavailableError) return { unavailable: error.message || 'This version is unavailable on Thunderstore.' };
           throw new Error(`Could not check ${ref.namespace}/${ref.name} v${ref.version}. ${error.message}`, { cause: error });
         }
         if (!mod || mod.id !== `${gameId}/${ref.namespace}/${ref.name}` || mod.namespace !== ref.namespace || mod.name !== ref.name || mod.version !== ref.version ||
             mod.gameId !== gameId || !Array.isArray(mod.dependencies) || mod.dependencies.length > 300) {
           throw new Error(`Could not resolve ${ref.namespace}/${ref.name} v${ref.version} for the selected game.`);
         }
-        return { entry, ref, mod };
-      }));
-      for (const { entry, ref, mod, unavailable } of resolved) {
-        if (entry.version !== ref.version) continue;
-        if (unavailable) {
-          entry.unavailable = unavailable;
-          continue;
-        }
-        entry.mod = mod;
-        for (const dependency of mod.dependencies) {
-          if (typeof dependency?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(dependency.namespace) ||
-              typeof dependency.name !== 'string' || !/^[a-z0-9_]{1,128}$/i.test(dependency.name) ||
-              typeof dependency.version !== 'string' || !/^\d{1,10}\.\d{1,10}\.\d{1,10}$/.test(dependency.version)) {
-            throw new Error('Thunderstore returned an invalid profile dependency.');
+        return { mod };
+      })();
+      versions.set(key, result);
+      return result;
+    }
+
+    async function resolveEntries() {
+      while (true) {
+        const batch = [...entries.values()].filter(entry => !entry.mod && !entry.unavailable).slice(0, 3);
+        if (!batch.length) return;
+        const resolved = await Promise.all(batch.map(async entry => {
+          const { namespace, name, version } = entry;
+          return { entry, version, ...await resolveVersion({ namespace, name, version }) };
+        }));
+        for (const { entry, version, mod, unavailable } of resolved) {
+          if (entry.version !== version) continue;
+          if (unavailable) {
+            entry.unavailable = unavailable;
+            continue;
           }
-          const key = `${dependency.namespace}/${dependency.name}`;
-          const existing = entries.get(key);
-          if (!existing) {
-            if (entries.size >= 200) throw new Error('The profile and its dependencies exceed 200 mods.');
-            entries.set(key, { namespace: dependency.namespace, name: dependency.name, version: dependency.version, enabled: false, explicit: false, mod: null, unavailable: null });
-          } else if (!existing.explicit && newer(dependency.version, existing.version)) {
-            existing.version = dependency.version;
-            existing.mod = null;
-            existing.unavailable = null;
+          entry.mod = mod;
+          for (const dependency of mod.dependencies) {
+            if (typeof dependency?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(dependency.namespace) ||
+                typeof dependency.name !== 'string' || !/^[a-z0-9_]{1,128}$/i.test(dependency.name) ||
+                typeof dependency.version !== 'string' || !/^\d{1,10}\.\d{1,10}\.\d{1,10}$/.test(dependency.version)) {
+              throw new Error('Thunderstore returned an invalid profile dependency.');
+            }
+            const key = packageKey(dependency);
+            const existing = entries.get(key);
+            if (!existing) {
+              if (entries.size >= 200) throw new Error('The profile and its dependencies exceed 200 mods.');
+              entries.set(key, { namespace: dependency.namespace, name: dependency.name, version: dependency.version, enabled: false, explicit: false, mod: null, unavailable: null });
+            } else if (!existing.explicit && newer(dependency.version, existing.version)) {
+              existing.version = dependency.version;
+              existing.mod = null;
+              existing.unavailable = null;
+            }
           }
         }
       }
     }
-    // Track the unavailable requirement that prevents each dependent from importing.
-    const blocked = new Map([...entries].filter(([, entry]) => entry.unavailable));
-    let changed;
-    do {
-      changed = false;
-      for (const [key, entry] of entries) {
-        if (blocked.has(key)) continue;
-        const missing = entry.mod.dependencies.map(ref => blocked.get(`${ref.namespace}/${ref.name}`)).find(Boolean);
-        if (missing) { blocked.set(key, missing); changed = true; }
+
+    function findBlocked() {
+      const blocked = new Map([...entries].filter(([, entry]) => entry.unavailable));
+      let changed;
+      do {
+        changed = false;
+        for (const [key, entry] of entries) {
+          if (blocked.has(key)) continue;
+          for (const ref of entry.mod.dependencies) {
+            const target = packageKey(ref);
+            const missing = blocked.get(target) ||
+              (newer(ref.version, entries.get(target).version) && unavailableUpgrades.get(versionKey(ref)));
+            if (!missing) continue;
+            blocked.set(key, missing);
+            changed = true;
+            break;
+          }
+        }
+      } while (changed);
+      return blocked;
+    }
+
+    let blocked, reachable;
+    while (true) {
+      await resolveEntries();
+      blocked = findBlocked();
+      // If an upgrade has a missing dependency of its own, keep the original pin
+      // available and skip only mods that need the unusable version.
+      const failedPins = [...upgradedPins.keys()].filter(key => blocked.has(key));
+      if (failedPins.length) {
+        for (const key of failedPins) {
+          const { namespace, name, version } = entries.get(key);
+          const ref = { namespace, name, version };
+          unavailableUpgrades.set(versionKey(ref), ref);
+          upgradedPins.delete(key);
+        }
+        entries = createEntries();
+        continue;
       }
-    } while (changed);
+      reachable = new Set();
+      const upgrades = new Map();
+      const visit = key => {
+        if (reachable.has(key)) return;
+        reachable.add(key);
+        for (const ref of entries.get(key).mod.dependencies) {
+          const target = packageKey(ref);
+          if (newer(ref.version, entries.get(target).version) &&
+              (!upgrades.has(target) || newer(ref.version, upgrades.get(target).version))) {
+            upgrades.set(target, ref);
+          }
+          visit(target);
+        }
+      };
+      for (const [key, entry] of entries) if (entry.explicit && !blocked.has(key)) visit(key);
+      if (!upgrades.size) break;
+
+      // Resolve the proposed versions before replacing working pins.
+      const candidates = [...upgrades].slice(0, 3);
+      const resolved = await Promise.all(candidates.map(async ([key, ref]) => ({
+        key, ref, ...await resolveVersion({ namespace: ref.namespace, name: ref.name, version: ref.version }),
+      })));
+      for (const { key, ref, unavailable } of resolved) {
+        if (unavailable) {
+          unavailableUpgrades.set(versionKey(ref), ref);
+        } else {
+          const entry = entries.get(key);
+          upgradedPins.set(key, ref.version);
+          entry.version = ref.version;
+          entry.mod = null;
+        }
+      }
+    }
+
     const skippedMods = [];
-    for (const [key, entry] of entries) {
+    const versionChanges = [];
+    for (const ref of parsed.mods) {
+      const key = packageKey(ref);
       const missing = blocked.get(key);
-      if (!entry.explicit || !missing) continue;
-      const label = `${entry.namespace}/${entry.name} v${entry.version}`;
-      skippedMods.push(missing === entry ? `${label} — ${missing.unavailable}`
-        : `${label} — requires unavailable ${missing.namespace}/${missing.name} v${missing.version}.`);
+      const entry = entries.get(key);
+      if (missing) {
+        const label = `${key} v${ref.version}`;
+        skippedMods.push(missing === entry ? `${label} — ${missing.unavailable}`
+          : `${label} — requires unavailable ${packageKey(missing)} v${missing.version}.`);
+      } else if (entry.version !== ref.version) {
+        versionChanges.push({ namespace: ref.namespace, name: ref.name, from: ref.version, to: entry.version });
+      }
     }
     if (skippedMods.length && skippedMods.length === parsed.mods.length) {
       throw new Error('None of the mods in this profile can be imported. Check that you selected the right game or ask for a new profile code.');
     }
 
-    // Keep the closure of the remaining explicit mods and their final versions.
-    const reachable = new Set();
-    const visit = key => {
-      if (reachable.has(key)) return;
-      reachable.add(key);
-      const { mod } = entries.get(key);
-      for (const dependency of mod.dependencies) {
-        const targetKey = `${dependency.namespace}/${dependency.name}`;
-        const target = entries.get(targetKey);
-        if (newer(dependency.version, target.version)) {
-          throw new Error(`${mod.name} requires ${dependency.name} v${dependency.version}, but the shared profile selects v${target.version}.`);
-        }
-        visit(targetKey);
-      }
-    };
-    for (const [key, entry] of entries) if (entry.explicit && !blocked.has(key)) visit(key);
     for (const key of entries.keys()) if (!reachable.has(key)) entries.delete(key);
     // Only inferred dependencies follow enabled parents; explicit profile choices stay intact.
+    let changed;
     do {
       changed = false;
       for (const entry of entries.values()) {
         if (!entry.enabled) continue;
         for (const dependency of entry.mod.dependencies) {
-          const target = entries.get(`${dependency.namespace}/${dependency.name}`);
+          const target = entries.get(packageKey(dependency));
           if (!target.explicit && !target.enabled) { target.enabled = true; changed = true; }
         }
       }
@@ -273,7 +347,7 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
     const mods = [...entries.values()].map(entry => ({ id: entry.mod.id, version: entry.version, enabled: entry.enabled, package: entry.mod }));
     const result = JSON.stringify({ format: 'modrelay-profile', version: 1, source: 'thunderstore', gameId,
       name: parsed.name, mods, configs: {}, configFiles: parsed.configFiles,
-      userDataFiles: parsed.userDataFiles, importWarnings: parsed.importWarnings, skippedMods });
+      userDataFiles: parsed.userDataFiles, importWarnings: parsed.importWarnings, skippedMods, versionChanges });
     if (Buffer.byteLength(result, 'utf8') > MAX_PROFILE_BYTES) throw new Error('The converted Ember profile exceeds 3 MB.');
     return result;
   }

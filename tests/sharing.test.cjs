@@ -231,15 +231,83 @@ test('Thunderstore import resolves exact versions, disabled choices, missing dep
   assert.equal(manager.readImport(JSON.stringify(result)).mods.length, 5);
 });
 
-test('Thunderstore import never silently upgrades explicit versions and chooses compatible inferred versions', async () => {
+test('Thunderstore import reviews changes to pinned versions and keeps enabled choices', async () => {
   const rootMods = [nativeMod('Team-First'), nativeMod('Team-Second')];
   const resolvePackage = async (gameId, ref) => packageFor(gameId, ref,
     ref.name === 'First' || ref.name === 'Second' ? [{ namespace: 'Team', name: 'Runtime', version: ref.name === 'First' ? '1.0.0' : '2.0.0' }] : []);
   const client = createSharingClient({ fetchImpl: async () => new Response(nativePayload(rootMods)), resolvePackage });
   const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'peak'));
   assert.equal(result.mods.find(mod => mod.package.name === 'Runtime').version, '2.0.0');
-  const conflict = createSharingClient({ fetchImpl: async () => new Response(nativePayload([...rootMods, nativeMod('Team-Runtime', '1.0.0')])), resolvePackage });
-  await assert.rejects(() => conflict.resolveThunderstoreProfile(key, 'peak'), /requires Runtime v2.0.0/);
+  assert.deepEqual(result.versionChanges, []);
+  const conflict = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload([...rootMods, nativeMod('Team-Runtime', '1.0.0', false)])), resolvePackage,
+  });
+  const reviewed = JSON.parse(await conflict.resolveThunderstoreProfile(key, 'peak'));
+  const runtime = reviewed.mods.find(mod => mod.package.name === 'Runtime');
+  assert.equal(runtime.version, '2.0.0');
+  assert.equal(runtime.enabled, false);
+  assert.deepEqual(reviewed.versionChanges, [{ namespace: 'Team', name: 'Runtime', from: '1.0.0', to: '2.0.0' }]);
+});
+
+test('an unavailable pinned upgrade leaves usable lower requirements and the original profile intact', async () => {
+  const roots = [
+    nativeMod('Team-Parent'), nativeMod('Team-NeedsMissing'), nativeMod('Team-NeedsAvailable'), nativeMod('Team-Runtime', '1.0.0'),
+  ];
+  const client = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload(roots)),
+    resolvePackage: async (gameId, ref) => {
+      if (ref.name === 'Runtime' && ref.version === '3.0.0') throw new ThunderstorePackageUnavailableError('Version missing.');
+      const dependencies = ({
+        Parent: [{ name: 'NeedsMissing', version: '1.0.0' }],
+        NeedsMissing: [{ name: 'Runtime', version: '3.0.0' }],
+        NeedsAvailable: [{ name: 'Runtime', version: '2.0.0' }],
+      })[ref.name] ?? [];
+      return packageFor(gameId, ref, dependencies.map(dependency => ({ namespace: 'Team', ...dependency })));
+    },
+  });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'lethal-company'));
+  assert.deepEqual(result.mods.map(({ package: mod, version }) => [mod.name, version]), [['NeedsAvailable', '1.0.0'], ['Runtime', '2.0.0']]);
+  assert.deepEqual(result.versionChanges, [{ namespace: 'Team', name: 'Runtime', from: '1.0.0', to: '2.0.0' }]);
+  assert.deepEqual(result.skippedMods, [
+    'Team/Parent v1.0.0 — requires unavailable Team/Runtime v3.0.0.',
+    'Team/NeedsMissing v1.0.0 — requires unavailable Team/Runtime v3.0.0.',
+  ]);
+});
+
+test('mods skipped for missing dependencies do not cause upgrades to retained pins', async () => {
+  const roots = [nativeMod('Team-Runtime', '1.0.0'), nativeMod('Team-Skipped')];
+  const client = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload(roots)),
+    resolvePackage: async (gameId, ref) => {
+      if (ref.name === 'Unlisted') throw new ThunderstorePackageUnavailableError('Not listed.');
+      assert.notEqual(ref.version, '2.0.0');
+      return packageFor(gameId, ref, ref.name === 'Skipped' ? [
+        { namespace: 'Team', name: 'Runtime', version: '2.0.0' },
+        { namespace: 'Team', name: 'Unlisted', version: '1.0.0' },
+      ] : []);
+    },
+  });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'lethal-company'));
+  assert.deepEqual(result.mods.map(({ package: mod, version }) => [mod.name, version]), [['Runtime', '1.0.0']]);
+  assert.deepEqual(result.versionChanges, []);
+  assert.equal(result.skippedMods.length, 1);
+});
+
+test('a pinned upgrade with a missing dependency preserves the working original version', async () => {
+  const roots = [nativeMod('Team-Runtime', '1.0.0'), nativeMod('Team-NeedsUpgrade')];
+  const client = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload(roots)),
+    resolvePackage: async (gameId, ref) => {
+      if (ref.name === 'Missing') throw new ThunderstorePackageUnavailableError('Not listed.');
+      const deps = ref.name === 'NeedsUpgrade' ? [{ name: 'Runtime', version: '2.0.0' }]
+        : ref.version === '2.0.0' ? [{ name: 'Missing', version: '1.0.0' }] : [];
+      return packageFor(gameId, ref, deps.map(dep => ({ namespace: 'Team', ...dep })));
+    },
+  });
+  const result = JSON.parse(await client.resolveThunderstoreProfile(key, 'lethal-company'));
+  assert.deepEqual(result.mods.map(({ package: mod, version }) => [mod.name, version]), [['Runtime', '1.0.0']]);
+  assert.deepEqual(result.versionChanges, []);
+  assert.deepEqual(result.skippedMods, ['Team/NeedsUpgrade v1.0.0 — requires unavailable Team/Runtime v2.0.0.']);
 });
 
 test('Thunderstore import reviews unavailable mods and their dependents, keeping other exact versions and settings', async () => {

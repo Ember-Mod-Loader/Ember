@@ -1669,13 +1669,19 @@ document.addEventListener('submit', async event => {
         const payload = JSON.parse(content);
         const warnings = Array.isArray(payload.importWarnings) ? payload.importWarnings.filter(item => typeof item === 'string') : [];
         const skippedMods = Array.isArray(payload.skippedMods) ? payload.skippedMods.filter(item => typeof item === 'string') : [];
-        if (warnings.length || skippedMods.length) {
+        const versionChanges = Array.isArray(payload.versionChanges) ? payload.versionChanges : [];
+        if (warnings.length || skippedMods.length || versionChanges.length) {
           const modCount = payload.mods.length;
-          const modLabel = `${modCount} ${modCount === 1 ? 'mod' : 'mods'}`;
-          form.importReview = { content, selection: importSelection(form), label: modCount ? `Import ${modLabel}` : 'Import profile' };
+          const modLabel = plural(modCount, 'mod');
+          const label = versionChanges.length ? 'Import with changes' : modCount ? `Import ${modLabel}` : 'Import profile';
+          form.importReview = { content, selection: importSelection(form), label };
           const review = form.querySelector('.import-review');
           review.innerHTML = `<strong>${modCount ? `${modLabel} ready to install` : 'No mods in this profile'}</strong>
             <p>${modCount ? 'Continue to download the mods from Thunderstore and import supported settings.' : 'Continue to import supported settings.'}</p>
+            ${versionChanges.length ? `<p><strong>Required version changes</strong></p>
+              <p>Ember will use these versions to meet the profile’s mod requirements if you confirm.</p>
+              <ul>${versionChanges.map(({ namespace, name, from, to }) =>
+                `<li><strong>${esc(name)}</strong> by ${esc(namespace)} · v${esc(from)} → v${esc(to)}</li>`).join('')}</ul>` : ''}
             ${skippedMods.length ? `<p><strong>${skippedMods.length} ${skippedMods.length === 1 ? 'mod' : 'mods'} will be skipped</strong></p>
             <ul>${skippedMods.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
             ${warnings.length ? `<details><summary>Extra files from the profile export</summary>
