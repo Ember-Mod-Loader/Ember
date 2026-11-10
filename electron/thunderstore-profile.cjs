@@ -3,12 +3,12 @@ const { buffer: readStream } = require('node:stream/consumers');
 const yauzl = require('yauzl');
 const { ZipFile } = require('yazl');
 const yaml = require('js-yaml');
-const { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_FILE_BYTES } = require('./config-files.cjs');
+const { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_TOTAL_BYTES } = require('./config-files.cjs');
 
 const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const MAX_NATIVE_PROFILE_BYTES = Math.ceil(MAX_ARCHIVE_BYTES / 3) * 4 + 128;
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
-const MAX_MANIFEST_BYTES = 256 * 1024;
+const MAX_PROFILE_METADATA_BYTES = 256 * 1024;
 const MAX_PROFILE_MODS = 200;
 const PROFILE_MARKER = '#r2modman';
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
@@ -152,14 +152,18 @@ async function parseThunderstoreProfile(value, gameId) {
       const inSettings = Boolean(config || userData);
       const isSettings = inSettings && CONFIG_EXTENSION.test(entry.fileName);
       const readText = isManifest || isSettings || MANAGER_FILE.test(entry.fileName);
-      const maximum = isManifest ? MAX_MANIFEST_BYTES : isSettings || /^doorstop_config\.ini$/i.test(entry.fileName) ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
-      if (entry.uncompressedSize > maximum) throw new Error('A profile file exceeds its supported size limit.');
+      if (isSettings && entry.uncompressedSize > MAX_CONFIG_TOTAL_BYTES) {
+        throw new Error(`${entry.fileName} exceeds the 1 MB configuration size limit.`);
+      }
+      if ((isManifest || /^doorstop_config\.ini$/i.test(entry.fileName)) && entry.uncompressedSize > MAX_PROFILE_METADATA_BYTES) {
+        throw new Error(`${entry.fileName} exceeds the 256 KB size limit for profile metadata.`);
+      }
       const stream = await archive.openReadStreamPromise(entry);
       const chunks = [];
       let bytes = 0, checksum = 0;
       for await (const chunk of stream) {
         bytes += chunk.length;
-        if (bytes > maximum || bytes > entry.uncompressedSize) { stream.destroy(); throw new Error('A profile file exceeds its supported size limit.'); }
+        if (bytes > entry.uncompressedSize) { stream.destroy(); throw new Error('A profile file expands beyond its declared size.'); }
         checksum = crc32(chunk, checksum);
         if (readText) chunks.push(chunk);
       }

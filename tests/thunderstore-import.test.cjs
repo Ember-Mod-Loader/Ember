@@ -76,18 +76,23 @@ async function importProfile(client, manager) {
   return manager.importProfile(json, parsed.mods.map(entry => entry.package));
 }
 
-test('a native shared profile keeps exact versions, disabled mods, settings and migration markers', async t => {
+test('a native shared profile keeps exact versions, disabled mods, large settings and migration markers', async t => {
   const f = await fixture(t);
   const requests = [];
   const resolved = [];
   const markerName = 'Team.Plugin.migration.done';
   const marker = 'Migration complete\n';
+  const largeName = 'LargePlugin.cfg';
+  const largeConfig = '# Custom mod setting\n'.repeat(17000);
   const client = createSharingClient({ fetchImpl: async (url, options) => {
     requests.push(url);
     assert.equal(options.redirect, 'manual');
     return requests.length === 1
       ? new Response(null, { status: 302, headers: { Location: `https://ccdn.thunderstore.io/live/modpacks/legacyprofile/${code}` } })
-      : new Response(archive([{ name: 'config/' + markerName, content: marker }]));
+      : new Response(archive([
+        { name: 'config/' + markerName, content: marker },
+        { name: 'config/' + largeName, content: largeConfig, deflate: true },
+      ]));
   }, resolvePackage: async (selectedGame, ref) => {
     assert.equal(selectedGame, gameId);
     resolved.push(ref);
@@ -108,6 +113,7 @@ test('a native shared profile keeps exact versions, disabled mods, settings and 
   const prepared = await f.builder.prepareProfile(imported.id, active, imported.configFiles);
   assert.equal(await readFile(path.join(prepared, 'BepInEx/config/Nested/settings.cfg'), 'utf8'), configuration);
   assert.equal(await readFile(path.join(prepared, 'BepInEx/config', markerName), 'utf8'), marker);
+  assert.equal(await readFile(path.join(prepared, 'BepInEx/config', largeName), 'utf8'), largeConfig);
   assert.equal(await readFile(path.join(prepared, 'doorstop_config.ini'), 'utf8'), 'enabled = true', 'The selected loader package supplies its own configuration.');
   const files = await readdir(path.join(prepared, 'BepInEx/plugins'), { recursive: true });
   assert(files.some(file => path.basename(file) === 'Enabled.dll'));
@@ -115,7 +121,7 @@ test('a native shared profile keeps exact versions, disabled mods, settings and 
   assert(!files.some(file => /(?:Disabled|OffRuntime)\.dll$/.test(file)));
   assert.deepEqual(f.downloads.map(ref => ref.name).sort(), ['BepInExPack', 'Enabled', 'Runtime']);
   const reloaded = f.createManager(f.saved, { live: true });
-  assert.deepEqual(reloaded.profile.configFiles, { 'Nested/settings.cfg': configuration, [markerName]: marker });
+  assert.deepEqual(reloaded.profile.configFiles, { 'Nested/settings.cfg': configuration, [markerName]: marker, [largeName]: largeConfig });
   assert.deepEqual(reloaded.readImport(reloaded.exportProfile().code).configFiles, imported.configFiles);
   assert.deepEqual(reloaded.profile.mods.map(entry => [entry.package.name, entry.version, entry.enabled]),
     imported.mods.map(entry => [entry.package.name, entry.version, entry.enabled]));

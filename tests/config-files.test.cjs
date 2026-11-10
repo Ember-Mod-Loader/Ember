@@ -21,8 +21,8 @@ test('configuration templates reject unsafe paths, executables, binary text, and
     { 'Sub/a.cfg': 'a', 'sub/b.cfg': 'b' },
     { 'café.cfg': 'a', 'cafe\u0301.cfg': 'b' },
   ]) assert.throws(() => normalizeConfigFiles(files), /conflicting/);
-  for (const text of [null, 42, 'binary\0data', '\u0001binary', '\ud800', 'x'.repeat(256 * 1024 + 1)]) {
-    assert.throws(() => normalizeConfigFiles({ 'test.cfg': text }), /text up to/);
+  for (const text of [null, 42, 'binary\0data', '\u0001binary', '\ud800']) {
+    assert.throws(() => normalizeConfigFiles({ 'test.cfg': text }), /valid UTF-8 text/);
   }
 });
 
@@ -31,5 +31,7 @@ test('configuration limits bound file counts and aggregate UTF-8 bytes', () => {
   const chunk = 'é'.repeat(128 * 1024);
   assert.equal(Object.keys(normalizeConfigFiles({ 'a.cfg': chunk, 'b.cfg': chunk, 'c.cfg': chunk, 'd.cfg': chunk })).length, 4);
   assert.throws(() => normalizeConfigFiles({ 'a.cfg': chunk, 'b.cfg': chunk, 'c.cfg': chunk, 'd.cfg': chunk, 'e.cfg': 'x' }), /exceed 1 MB/);
-  assert.throws(() => normalizeConfigFiles({ 'a.cfg': chunk + 'é' }), /256 KB/);
+  const large = chunk.repeat(4);
+  assert.deepEqual(normalizeConfigFiles({ 'large.cfg': large }), { 'large.cfg': large });
+  assert.throws(() => normalizeConfigFiles({ 'large.cfg': large + 'é' }), /exceed 1 MB/);
 });

@@ -176,8 +176,8 @@ function readConfigFiles(value = {}) {
       }
       paths.set(key, { path: combined, directory });
     }
-    if (typeof content !== "string" || !content.isWellFormed() || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(content) || encoder.encode(content).byteLength > 256 * 1024) {
-      throw new Error("Configuration files must be text up to 256 KB each.");
+    if (typeof content !== "string" || !content.isWellFormed() || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(content)) {
+      throw new Error("Configuration files must be valid UTF-8 text.");
     }
     bytes += encoder.encode(content).byteLength;
     if (bytes > 1024 * 1024) throw new Error("Profile configuration files exceed 1 MB.");

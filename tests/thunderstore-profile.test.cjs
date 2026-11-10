@@ -158,6 +158,8 @@ test('entry, expanded, manifest, and aggregate configuration limits prevent reso
   await assert.rejects(() => parseThunderstoreProfile(archive([], manifest, { declaredEntryCount: 513 }), gameId), /512/);
   await assert.rejects(() => parseThunderstoreProfile(archive([{ name: 'config/huge.cfg', content: 'x', expandedSize: 17 * 1024 * 1024 }]), gameId));
   await assert.rejects(() => parseThunderstoreProfile(encode(zipFixture([{ name: 'export.r2x', content: 'x'.repeat(256 * 1024 + 1) }])), gameId), /size/);
+  await assert.rejects(() => parseThunderstoreProfile(archive([{ name: 'config/large.cfg', content: 'x'.repeat(1024 * 1024 + 1), deflate: true }]), gameId),
+    /config\/large\.cfg exceeds the 1 MB/);
   await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: 129 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x' }))), gameId), /128/);
   await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: 5 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x'.repeat(250 * 1024), deflate: true }))), gameId), /1 MB/);
 });

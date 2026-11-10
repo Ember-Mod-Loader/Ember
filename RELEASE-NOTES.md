@@ -1,7 +1,7 @@
-# Ember 0.6.13
+# Ember 0.6.14
 
-- Share a profile with Thunderstore Mod Manager or r2modman users by choosing their code format from Profiles or Installed mods.
-- Thunderstore codes include the profile's mod versions, enabled states, and supported saved settings.
+- Thunderstore profile imports now keep larger mod configuration files, including CodeRebirth settings, within the existing 1 MB limit for each settings folder.
+- Size errors for individual files now identify the file and its limit.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
