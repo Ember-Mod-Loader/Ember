@@ -1,7 +1,7 @@
-# Ember 0.6.12
+# Ember 0.6.13
 
-- Shared profiles can restore unlisted mods when Thunderstore still serves the exact active version and associates the package with the selected game.
-- The import review lists these mods before downloading them.
+- Share a profile with Thunderstore Mod Manager or r2modman users by choosing their code format from Profiles or Installed mods.
+- Thunderstore codes include the profile's mod versions, enabled states, and supported saved settings.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

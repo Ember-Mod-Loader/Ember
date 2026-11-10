@@ -4,6 +4,8 @@ const { createSharingClient, MAX_PROFILE_BYTES } = require('../electron/sharing.
 const { ThunderstorePackageUnavailableError } = require('../electron/thunderstore.cjs');
 const { zipFixture } = require('./zip-fixture.cjs');
 const yaml = require('js-yaml');
+const yauzl = require('yauzl');
+const { text: readText } = require('node:stream/consumers');
 
 const key = '01a1ad5d-bee6-0706-b9fa-a899094432e0';
 const code = `EMBER-${key}`;
@@ -55,6 +57,70 @@ test('sharing coalesces concurrent identical snapshots and reuses a successful c
   assert.deepEqual(await Promise.all([first, second]), [code, code]);
   assert.equal(await client.publishProfile(profile), code);
   assert.equal(calls, 1);
+});
+
+test('Thunderstore codes use a native archive with exact versions, enabled states, and saved configs', async () => {
+  const nativeKey = '01a1ad5d-bee6-0706-b9fa-a899094432e1';
+  const snapshot = JSON.parse(profile);
+  snapshot.mods.push({ id: 'lethal-company/Another-Team/Utility', version: '2.0.3', enabled: true,
+    package: { namespace: 'Another-Team', name: 'Utility', version: '2.0.3', dependencies: [] } });
+  snapshot.configFiles = { 'Nested/crew.cfg': 'Welcome = café ☕' };
+  snapshot.userDataFiles = { 'MelonPreferences.cfg': '[Crew]\nReady = true' };
+  const json = JSON.stringify(snapshot);
+  const uploads = [];
+  const client = createSharingClient({ fetchImpl: async (url, options) => {
+    assert.equal(url, createUrl);
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers['Content-Type'], 'application/octet-stream');
+    uploads.push(options.body);
+    return Response.json({ key: options.body === json ? key : nativeKey.toUpperCase() });
+  } });
+  assert.deepEqual(await Promise.all([
+    client.publishProfile(json, 'thunderstore'), client.publishProfile(json, 'thunderstore'), client.publishProfile(json),
+  ]), [nativeKey, nativeKey, code]);
+  assert.equal(await client.publishProfile(json, 'thunderstore'), nativeKey);
+  assert.equal(uploads.length, 2);
+  const payload = uploads.find(body => body !== json);
+  assert.match(payload, /^#r2modman\n[A-Za-z0-9+/]+={0,2}$/);
+  const archive = await yauzl.fromBufferPromise(Buffer.from(payload.split('\n')[1], 'base64'));
+  const files = {};
+  for await (const entry of archive.eachEntry()) {
+    files[entry.fileName] = await readText(await archive.openReadStreamPromise(entry));
+  }
+  assert.deepEqual(Object.keys(files), ['export.r2x', 'config/Nested/crew.cfg', 'UserData/MelonPreferences.cfg']);
+  assert.deepEqual(yaml.load(files['export.r2x']), { profileName: 'Cafe crew', mods: [
+    { name: 'Team-Plugin', version: { major: 1, minor: 2, patch: 0 }, enabled: false },
+    { name: 'Another-Team-Utility', version: { major: 2, minor: 0, patch: 3 }, enabled: true },
+  ] });
+  assert.equal(files['config/Nested/crew.cfg'], snapshot.configFiles['Nested/crew.cfg']);
+  assert.equal(files['UserData/MelonPreferences.cfg'], snapshot.userDataFiles['MelonPreferences.cfg']);
+  const recipient = createSharingClient({ fetchImpl: async url => {
+    assert.equal(url, getUrl.replace(key, nativeKey));
+    return new Response(payload);
+  }, resolvePackage: (gameId, ref) => packageFor(gameId, ref) });
+  const imported = JSON.parse(await recipient.resolveThunderstoreProfile(nativeKey, snapshot.gameId));
+  assert.equal(imported.name, 'Cafe crew');
+  assert.deepEqual(imported.mods.map(({ id, version, enabled }) => ({ id, version, enabled })),
+    snapshot.mods.map(({ id, version, enabled }) => ({ id, version, enabled })));
+  assert.deepEqual(imported.configFiles, snapshot.configFiles);
+  assert.deepEqual(imported.userDataFiles, snapshot.userDataFiles);
+});
+
+test('invalid Thunderstore share snapshots are rejected before upload', async () => {
+  let requests = 0;
+  const client = createSharingClient({ fetchImpl: async () => { requests++; } });
+  const snapshot = JSON.parse(profile);
+  const [entry] = snapshot.mods;
+  for (const [changes, error] of [
+    [{ mods: [] }, /1 to 200 mods/],
+    [{ mods: [entry, entry] }, /duplicate mods/],
+    [{ mods: [{ ...entry, version: 'latest' }] }, /mod or version/],
+    [{ configFiles: { '../settings.cfg': 'Value = true' } }, /unsupported configuration path/],
+  ]) {
+    await assert.rejects(client.publishProfile(JSON.stringify({ ...snapshot, ...changes }), 'thunderstore'), error);
+  }
+  await assert.rejects(client.publishProfile(profile, 'unknown'), /share code format/);
+  assert.equal(requests, 0);
 });
 
 test('invalid profile envelopes, oversized UTF-8, and malformed share codes never make a request', async () => {

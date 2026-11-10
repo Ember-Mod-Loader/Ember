@@ -1,5 +1,5 @@
 const { createHash } = require('node:crypto');
-const { parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES } = require('./thunderstore-profile.cjs');
+const { encodeThunderstoreProfile, parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES } = require('./thunderstore-profile.cjs');
 const { fetchProfilePackageVersion, ThunderstorePackageUnavailableError } = require('./thunderstore.cjs');
 
 const ORIGIN = 'https://thunderstore.io';
@@ -9,7 +9,7 @@ const CODE = new RegExp(`^(?:EMBER-)?(${KEY})$`, 'i');
 const CDN_HOSTS = new Set(['ccdn.thunderstore.io', 'cdn.thunderstore.io', 'gcdn.thunderstore.io']);
 const GAME_IDS = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 
-function profileJson(value, importing = false) {
+function parseProfileJson(value, importing = false) {
   const message = importing
     ? 'This code does not contain an Ember profile. Use a share code created by Ember.'
     : 'Choose a valid Ember profile to share.';
@@ -24,7 +24,7 @@ function profileJson(value, importing = false) {
       !payload.configs || typeof payload.configs !== 'object' || Array.isArray(payload.configs)) {
     throw new Error(message);
   }
-  return value;
+  return payload;
 }
 
 function parseCode(value) {
@@ -106,16 +106,18 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
     return response;
   }
 
-  async function publishProfile(json) {
-    profileJson(json);
-    const digest = createHash('sha256').update(json).digest('hex');
+  async function publishProfile(json, format = 'ember') {
+    if (format !== 'ember' && format !== 'thunderstore') throw new Error('Choose an available share code format.');
+    const profile = parseProfileJson(json);
+    const digest = createHash('sha256').update(format).update(json).digest('hex');
     if (published.has(digest)) return published.get(digest);
     if (pending.has(digest)) return pending.get(digest);
     const work = (async () => {
+      const content = format === 'ember' ? json : await encodeThunderstoreProfile(profile);
       const response = await request(`${ORIGIN}/api/experimental/legacyprofile/create/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' },
-        body: json,
+        body: content,
       });
       if (!response.ok) {
         await cancelBody(response);
@@ -127,7 +129,8 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
       if (typeof body?.key !== 'string' || !new RegExp(`^${KEY}$`, 'i').test(body.key)) {
         throw new Error('Thunderstore returned an invalid share code.');
       }
-      const code = `EMBER-${body.key.toLowerCase()}`;
+      const key = body.key.toLowerCase();
+      const code = format === 'ember' ? `EMBER-${key}` : key;
       published.set(digest, code);
       if (published.size > 50) published.delete(published.keys().next().value);
       return code;
@@ -160,7 +163,9 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
   }
 
   async function resolveProfile(code) {
-    return profileJson(await downloadProfile(code, MAX_PROFILE_BYTES), true);
+    const json = await downloadProfile(code, MAX_PROFILE_BYTES);
+    parseProfileJson(json, true);
+    return json;
   }
 
   async function resolveThunderstoreProfile(code, gameId) {

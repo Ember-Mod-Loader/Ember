@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('modRelayDesktop', {
     return () => ipcRenderer.removeListener('modrelay:window-state', listener);
   },
   saveProfile: ({ json, filename }) => ipcRenderer.invoke('modrelay:save-profile', { json, filename }),
-  shareProfile: json => ipcRenderer.invoke('modrelay:share-profile', json),
+  shareProfile: (json, format) => ipcRenderer.invoke('modrelay:share-profile', json, format),
   resolveProfileCode: code => ipcRenderer.invoke('modrelay:resolve-profile-code', code),
   resolveThunderstoreProfile: (code, gameId) => ipcRenderer.invoke('modrelay:resolve-thunderstore-profile', code, gameId),
   fetchCatalog: options => ipcRenderer.invoke('modrelay:catalog', options),

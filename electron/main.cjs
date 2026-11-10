@@ -330,7 +330,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     handle('save-profile', saveProfile);
     const sharing = createSharingClient();
-    handle('share-profile', json => sharing.publishProfile(json));
+    handle('share-profile', (json, format) => sharing.publishProfile(json, format));
     handle('resolve-profile-code', code => sharing.resolveProfile(code));
     handle('resolve-thunderstore-profile', (code, gameId) => sharing.resolveThunderstoreProfile(code, gameId));
     handle('catalog', fetchCatalog);

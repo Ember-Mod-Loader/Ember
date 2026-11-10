@@ -784,13 +784,20 @@ function renderDialog() {
     }
     case 'export': {
       const share = ui.share?.profileId === id ? ui.share : null;
+      const thunderstore = share?.format === 'thunderstore';
+      const code = share?.codes[share.format];
       dialog.innerHTML = `${dialogHeader('Share profile', `Share ${profile.name} with a short code or export a file.`)}
-        <div class="dialog-form share-form">${share?.code
-          ? `<label>Share code<input class="field share-code" type="text" value="${esc(share.code)}" readonly spellcheck="false" aria-label="Share code"></label><p>Paste this code into Import profile on another device running Ember.</p>`
-          : '<p>Create a short code to share this profile. The profile is uploaded to Thunderstore, and anyone with the code can import it.</p>'}
+        <div class="dialog-form share-form">
+          <label>Share with<select class="field" id="share-format" data-initial-focus${share?.busy ? ' disabled' : ''}>
+            <option value="ember">Ember</option><option value="thunderstore"${thunderstore ? ' selected' : ''}>Thunderstore / r2modman</option>
+          </select></label>
+          ${code
+            ? `<label>Share code<input class="field share-code" type="text" value="${esc(code)}" readonly spellcheck="false"></label>
+              <p>${thunderstore ? 'Select the same game in Thunderstore Mod Manager or r2modman and import the profile from code.' : 'Paste this code into Import profile in Ember.'}</p>`
+            : '<p>Creating a code uploads your mod list and supported settings to Thunderstore. Anyone with the code can import it.</p>'}
           ${share?.error ? `<p class="form-error" role="alert">${esc(share.error)}</p>` : ''}
         </div>
-        <div class="dialog-footer">${button('Download JSON', 'download', 'export-file', { id })}${share?.code
+        <div class="dialog-footer">${button('Download JSON', 'download', 'export-file', { id })}${code
           ? button('Copy code', 'copy', 'export-copy', { id, style: 'primary' })
           : button(share?.busy ? 'Creating code…' : 'Create share code', 'upload', 'export-create', { id, style: 'primary', disabled: share?.busy || !desktop?.shareProfile })}</div>`;
       break;
@@ -1248,7 +1255,7 @@ function applyPendingRemoval(includeDependents) {
 function openShareDialog(id) {
   const { json } = manager.exportProfile(id);
   if (ui.share?.profileId !== id || ui.share.json !== json) {
-    ui.share = { profileId: id, json, code: '', busy: false, error: '' };
+    ui.share = { profileId: id, json, format: 'ember', codes: {}, busy: false, error: '' };
   }
   openDialog('export', id);
 }
@@ -1257,16 +1264,20 @@ async function createShareCode() {
   const share = ui.share;
   if (!share || share.busy || ui.dialog?.type !== 'export' || ui.dialog.id !== share.profileId) return;
   if (!desktop?.shareProfile) throw new Error('Open Ember on desktop to create a share code.');
+  const { format, json } = share;
   share.busy = true;
   share.error = '';
   renderDialog();
   try {
-    share.code = await desktop.shareProfile(share.json);
+    share.codes[format] = await desktop.shareProfile(json, format);
   } catch (error) {
     share.error = errorMessage(error);
   } finally {
     share.busy = false;
-    if (ui.share === share && ui.dialog?.type === 'export' && ui.dialog.id === share.profileId) renderDialog();
+    if (ui.share === share && ui.dialog?.type === 'export' && ui.dialog.id === share.profileId) {
+      renderDialog();
+      if (!dialog.contains(document.activeElement)) dialog.querySelector('.dialog-footer .primary')?.focus();
+    }
   }
 }
 
@@ -1406,11 +1417,14 @@ async function handleAction(action, id) {
       break;
     case 'export': openShareDialog(id); break;
     case 'export-create': await createShareCode(); break;
-    case 'export-copy':
-      if (ui.share?.profileId !== id || !ui.share.code) throw new Error('Create a share code first.');
-      await navigator.clipboard.writeText(ui.share.code);
+    case 'export-copy': {
+      const share = ui.share;
+      const code = share?.profileId === id && share.codes[share.format];
+      if (!code) throw new Error('Create a share code first.');
+      await navigator.clipboard.writeText(code);
       notify('Profile code copied.');
       break;
+    }
     case 'export-file': {
       const { json, filename } = manager.exportProfile(id);
       if (window.modRelayDesktop?.saveProfile) {
@@ -1590,7 +1604,13 @@ document.addEventListener('input', event => {
 document.addEventListener('change', event => {
   const target = event.target;
   try {
-    if (target.id === 'import-source') {
+    if (target.id === 'share-format') {
+      const share = ui.share;
+      if (ui.dialog?.type !== 'export' || !share || share.busy) return;
+      share.format = target.value;
+      share.error = '';
+      renderDialog();
+    } else if (target.id === 'import-source') {
       const form = target.form;
       for (const section of form.querySelectorAll('[data-import-section]')) section.hidden = section.dataset.importSection !== target.value;
       const error = form.querySelector('.form-error');

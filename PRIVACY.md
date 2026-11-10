@@ -1,6 +1,6 @@
 # Privacy
 
-Applies to Ember 0.6.12.
+Applies to Ember 0.6.13.
 
 ## On your device
 
@@ -34,6 +34,6 @@ Using the live catalog sends the selected game, search text, filters, and packag
 
 Ember checks the active profile's installed package versions with Thunderstore when you open it and periodically while Ember is open. These lookups request public package identifiers and game communities. The latest known versions are cached locally so update indicators remain visible offline.
 
-Choosing **Create share code** uploads the exported profile to Thunderstore's profile-sharing service. The export includes its name, game, package versions, enabled states, and any settings or configuration text saved in the profile. Anyone with the resulting code can retrieve that export. Profiles are uploaded only when you choose this action. Importing a short code retrieves its profile from Thunderstore. JSON file exports and older offline codes remain available without publishing a profile.
+Choosing **Create share code** uploads the exported profile to Thunderstore's profile-sharing service. Both code formats include the profile name, package versions, enabled states, and supported saved configuration text. The Ember format also records the game. Anyone with the resulting code can retrieve the export. Ember uploads profiles only when you create a code. JSON file exports and older offline codes remain available without uploading a profile.
 
 Choosing a Steam launch or opening an external package page hands the action to Steam or your browser. Steam handles its own sign-in and game ownership checks. [Steam privacy policy](https://store.steampowered.com/privacy_agreement/)

@@ -1,7 +1,7 @@
 {
   "name": "modrelay",
   "productName": "Ember",
-  "version": "0.6.12",
+  "version": "0.6.13",
   "private": true,
   "description": "Open-source Thunderstore mod manager for Windows",
   "author": "Ember",
@@ -61,6 +61,14 @@
       {
         "from": "node_modules/js-yaml/LICENSE",
         "to": "licenses/JS-YAML.txt"
+      },
+      {
+        "from": "node_modules/yazl/LICENSE",
+        "to": "licenses/Yazl.txt"
+      },
+      {
+        "from": "node_modules/buffer-crc32/LICENSE",
+        "to": "licenses/Buffer-CRC32.txt"
       }
     ],
     "electronFuses": {
@@ -99,7 +107,8 @@
   "dependencies": {
     "electron-updater": "6.8.11",
     "js-yaml": "4.3.2",
-    "yauzl": "3.4.0"
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
   },
   "license": "MIT",
   "repository": {

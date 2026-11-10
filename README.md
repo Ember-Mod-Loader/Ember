@@ -37,7 +37,7 @@ Ember finds supported games in your Steam libraries. If a game isn't found, choo
 - Install mods and their required packages together.
 - Enable, disable, update, and remove individual mods, with prompts for affected dependencies.
 - See available mod updates in Installed mods. When you open a profile, choose **Update now** or **Wait**.
-- Keep separate profiles and share mod lists from Installed mods or Profiles with an Ember profile code.
+- Keep separate profiles and share mod lists from Installed mods or Profiles with an Ember or Thunderstore code.
 - Follow downloads and launch your game with mods or in vanilla mode.
 - Choose a wallpaper that stays selected across profiles and games.
 - Redeem Ember codes in **Settings → Codes**.
@@ -72,7 +72,9 @@ To remove a loader installed by Ember, choose **Remove loader** in the setup pan
 <details>
 <summary><strong>Sharing and importing profiles</strong></summary>
 
-Choose **Profiles → Share profile → Create share code** to send a mod list to another Ember user. This uploads the profile to Thunderstore's sharing service. Anyone with the code can import it; creating and resolving codes requires internet access.
+Open **Share profile** from Profiles or Installed mods. Choose **Ember** for friends using Ember or **Thunderstore / r2modman** for friends using either of those managers. They select the same game and paste the code into **Import profile → From code** in Thunderstore Mod Manager or r2modman. Each manager downloads the referenced versions it can find on Thunderstore.
+
+**Create share code** uploads the profile snapshot to Thunderstore's sharing service. Anyone with the code can retrieve it.
 
 In **Import profile**, choose **Ember** for Ember codes or JSON files, or **Thunderstore / r2modman** for a code shared by either manager. For Thunderstore profiles, select the game the profile was made for. Ember shows required version changes, unavailable mods, and exact versions it can download outside the public catalog before downloading. It keeps the enabled and disabled choices for the mods it imports.
 

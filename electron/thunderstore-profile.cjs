@@ -1,5 +1,7 @@
 const { crc32 } = require('node:zlib');
+const { buffer: readStream } = require('node:stream/consumers');
 const yauzl = require('yauzl');
+const { ZipFile } = require('yazl');
 const yaml = require('js-yaml');
 const { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_FILE_BYTES } = require('./config-files.cjs');
 
@@ -7,6 +9,8 @@ const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const MAX_NATIVE_PROFILE_BYTES = Math.ceil(MAX_ARCHIVE_BYTES / 3) * 4 + 128;
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
+const MAX_PROFILE_MODS = 200;
+const PROFILE_MARKER = '#r2modman';
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 // Mod lists come from export.r2x; Ember uses the selected loader's configuration.
 const MANAGER_FILE = /^(?:mods\.yml|doorstop_config\.ini)$/i;
@@ -46,7 +50,7 @@ function parseManifest(text) {
     } });
   } catch { throw new Error('The Thunderstore profile manifest is invalid.'); }
   if (!value || typeof value.profileName !== 'string' || !value.profileName.trim() ||
-      value.profileName.trim().length > 60 || !Array.isArray(value.mods) || value.mods.length > 200) {
+      value.profileName.trim().length > 60 || !Array.isArray(value.mods) || value.mods.length > MAX_PROFILE_MODS) {
     throw new Error('Choose a Thunderstore profile with a name up to 60 characters and up to 200 mods.');
   }
   const seen = new Set();
@@ -64,12 +68,56 @@ function parseManifest(text) {
   return { name: value.profileName.trim(), mods };
 }
 
+async function encodeThunderstoreProfile(profile) {
+  if (!profile.mods.length || profile.mods.length > MAX_PROFILE_MODS) {
+    throw new Error('Choose a profile with 1 to 200 mods to create a Thunderstore code.');
+  }
+  const seen = new Set();
+  const mods = profile.mods.map(entry => {
+    const { namespace, name } = entry?.package ?? {};
+    if (typeof namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(namespace) ||
+        typeof name !== 'string' || !/^[a-z0-9_]{1,128}$/i.test(name) ||
+        entry.id !== `${profile.gameId}/${namespace}/${name}` ||
+        typeof entry.version !== 'string' || !/^\d{1,10}\.\d{1,10}\.\d{1,10}$/.test(entry.version) ||
+        entry.version !== entry.package.version || typeof entry.enabled !== 'boolean') {
+      throw new Error('The profile contains a mod or version that cannot be shared with Thunderstore.');
+    }
+    const fullName = `${namespace}-${name}`;
+    if (seen.has(fullName)) throw new Error('The profile contains duplicate mods.');
+    seen.add(fullName);
+    const [major, minor, patch] = entry.version.split('.').map(Number);
+    return { name: fullName, version: { major, minor, patch }, enabled: entry.enabled };
+  });
+  // The recipient's profile name field accepts ASCII letters, digits, and a few separators.
+  const name = profile.name.normalize('NFKD').replace(/\p{Mark}/gu, '').replace(/[^a-z0-9_. -]+/gi, ' ')
+    .replace(/^[_. -]+/, '');
+  const portableName = RESERVED_DEVICE.test(name.split('.', 1)[0].trimEnd()) ? `Ember ${name}` : name;
+  const profileName = portableName.slice(0, 60).replace(/[. ]+$/, '') || 'Ember profile';
+  const manifest = yaml.dump({ profileName, mods }, { noRefs: true });
+  const files = [['export.r2x', manifest]];
+  const paths = new Map();
+  for (const [folder, settings] of [['config', profile.configFiles], ['UserData', profile.userDataFiles]]) {
+    for (const [relative, content] of Object.entries(normalizeConfigFiles(settings))) {
+      const path = `${folder}/${relative}`;
+      validatePath(path, paths, false);
+      files.push([path, content]);
+    }
+  }
+
+  const zip = new ZipFile();
+  // Stable timestamps let the sharing service reuse a code for an unchanged snapshot.
+  const mtime = new Date(2020, 0, 1);
+  for (const [path, content] of files) zip.addBuffer(Buffer.from(content, 'utf8'), path, { mtime });
+  zip.end();
+  return `${PROFILE_MARKER}\n${(await readStream(zip.outputStream)).toString('base64')}`;
+}
+
 async function parseThunderstoreProfile(value, gameId) {
   if (!GAMES.has(gameId)) throw new Error('Choose a supported game before importing.');
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_NATIVE_PROFILE_BYTES || !value.startsWith('#r2modman')) {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_NATIVE_PROFILE_BYTES || !value.startsWith(PROFILE_MARKER)) {
     throw new Error('This code does not contain a supported Thunderstore profile.');
   }
-  const encoded = value.slice('#r2modman'.length).trim();
+  const encoded = value.slice(PROFILE_MARKER.length).trim();
   if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
     throw new Error('The Thunderstore profile archive is invalid.');
   }
@@ -139,4 +187,4 @@ async function parseThunderstoreProfile(value, gameId) {
   } finally { archive.close(); }
 }
 
-module.exports = { parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES, MAX_ARCHIVE_BYTES };
+module.exports = { encodeThunderstoreProfile, parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES, MAX_ARCHIVE_BYTES };
