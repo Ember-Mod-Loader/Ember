@@ -1,6 +1,6 @@
 const { createHash } = require('node:crypto');
 const { parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES } = require('./thunderstore-profile.cjs');
-const { fetchListedPackageVersion, ThunderstorePackageUnavailableError } = require('./thunderstore.cjs');
+const { fetchProfilePackageVersion, ThunderstorePackageUnavailableError } = require('./thunderstore.cjs');
 
 const ORIGIN = 'https://thunderstore.io';
 const MAX_PROFILE_BYTES = 3 * 1024 * 1024;
@@ -84,7 +84,7 @@ function cdnTarget(location, key, from) {
 }
 
 function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (gameId, ref) =>
-  fetchListedPackageVersion(gameId, ref.namespace, ref.name, ref.version) } = {}) {
+  fetchProfilePackageVersion(gameId, ref.namespace, ref.name, ref.version) } = {}) {
   const published = new Map();
   const pending = new Map();
 
@@ -345,9 +345,11 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
       }
     } while (changed);
     const mods = [...entries.values()].map(entry => ({ id: entry.mod.id, version: entry.version, enabled: entry.enabled, package: entry.mod }));
+    const unlistedMods = mods.filter(entry => entry.package.unlisted === true)
+      .map(({ package: { namespace, name }, version }) => ({ namespace, name, version }));
     const result = JSON.stringify({ format: 'modrelay-profile', version: 1, source: 'thunderstore', gameId,
       name: parsed.name, mods, configs: {}, configFiles: parsed.configFiles,
-      userDataFiles: parsed.userDataFiles, importWarnings: parsed.importWarnings, skippedMods, versionChanges });
+      userDataFiles: parsed.userDataFiles, importWarnings: parsed.importWarnings, skippedMods, versionChanges, unlistedMods });
     if (Buffer.byteLength(result, 'utf8') > MAX_PROFILE_BYTES) throw new Error('The converted Ember profile exceeds 3 MB.');
     return result;
   }

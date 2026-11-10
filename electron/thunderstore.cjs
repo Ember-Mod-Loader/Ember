@@ -216,22 +216,44 @@ async function packageFromListing(gameId, communityId, value) {
   return { ...mod, dependencies };
 }
 
-async function fetchListedPackageVersion(gameId, namespace, name, version) {
+async function fetchUnlistedPackage(gameId, namespace, name) {
+  const communityId = community(gameId);
+  let value;
+  try {
+    value = await getJson(`/api/experimental/package/${namespace}/${name}/`, 3 * 60_000);
+  } catch (error) {
+    if (!(error instanceof ThunderstoreNotFoundError)) throw error;
+    throw new ThunderstorePackageUnavailableError('Thunderstore no longer lists this mod for the selected game.');
+  }
+  if (value?.namespace !== namespace || value.name !== name || !Array.isArray(value.community_listings)) {
+    throw new Error(`Thunderstore returned invalid package metadata for ${namespace}/${name}.`);
+  }
+  const matchingListings = value.community_listings.filter(listing => listing?.community === communityId);
+  if (matchingListings.length !== 1 || matchingListings[0].has_nsfw_content !== false) {
+    throw new ThunderstorePackageUnavailableError('Thunderstore has no matching package for this game.');
+  }
+  return value;
+}
+
+async function fetchProfilePackageVersion(gameId, namespace, name, version, { allowUnlisted = true } = {}) {
   if (!validVersion(version)) throw new Error('Invalid Thunderstore package version.');
   let listing;
+  let unlisted;
   try {
     listing = await fetchPackageListing(gameId, namespace, name);
   } catch (error) {
-    if (error instanceof ThunderstoreNotFoundError) {
+    if (!(error instanceof ThunderstoreNotFoundError)) throw error;
+    if (!allowUnlisted) {
       throw new ThunderstorePackageUnavailableError('Thunderstore no longer lists this mod for the selected game.');
     }
-    throw error;
+    unlisted = await fetchUnlistedPackage(gameId, namespace, name);
   }
   try {
-    if (listing.value.latest_version_number === version) {
+    if (listing?.value.latest_version_number === version) {
       return await packageFromListing(gameId, listing.communityId, listing.value);
     }
-    return await fetchPackageVersion(gameId, namespace, name, version);
+    const mod = await fetchPackageVersion(gameId, namespace, name, version);
+    return unlisted ? { ...mod, url: '', unlisted: true, deprecated: unlisted.is_deprecated === true || mod.deprecated } : mod;
   } catch (error) {
     if (error instanceof ThunderstoreNotFoundError) {
       throw new ThunderstorePackageUnavailableError(`Thunderstore does not have an active ${namespace}/${name} v${version} download.`);
@@ -267,4 +289,4 @@ async function fetchPackageVersion(gameId, namespace, name, version) {
   };
 }
 
-module.exports = { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion, fetchListedPackageVersion, ThunderstorePackageUnavailableError };
+module.exports = { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion, fetchProfilePackageVersion, ThunderstorePackageUnavailableError };

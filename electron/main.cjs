@@ -4,7 +4,7 @@ const { mkdirSync, existsSync } = require('node:fs');
 const { rename, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion, fetchListedPackageVersion } = require('./thunderstore.cjs');
+const { fetchCatalog, fetchPackage, fetchPackageUpdate, fetchPackageVersion, fetchProfilePackageVersion } = require('./thunderstore.cjs');
 const { createPackageCache } = require('./packages.cjs');
 const { registerGameActions } = require('./game-actions.cjs');
 const { createDownloadHistory } = require('./download-history.cjs');
@@ -132,7 +132,7 @@ function handle(channel, action) {
   });
 }
 
-async function downloadPackages(cache, gameId, roots, history, operationId, listedProfile) {
+async function downloadPackages(cache, gameId, roots, history, operationId, thunderstoreProfile) {
   if (!Array.isArray(roots) || roots.length > 200) throw new Error('Choose up to 200 Thunderstore packages.');
   const packages = new Map();
 
@@ -141,13 +141,15 @@ async function downloadPackages(cache, gameId, roots, history, operationId, list
     const key = `${ref.namespace}/${ref.name}@${ref.version}`;
     if (packages.has(key)) return;
     if (packages.size >= 200) throw new Error('This download includes more than 200 package versions.');
-    const getPackage = listedProfile ? fetchListedPackageVersion : ref.version ? fetchPackageVersion : fetchPackage;
-    const mod = await getPackage(gameId, ref.namespace, ref.name, ref.version);
+    const { namespace, name, version } = ref;
+    const mod = thunderstoreProfile
+      ? await fetchProfilePackageVersion(gameId, namespace, name, version, { allowUnlisted: ref.unlisted === true })
+      : await (version ? fetchPackageVersion : fetchPackage)(gameId, namespace, name, version);
     const resolvedKey = `${mod.namespace}/${mod.name}@${mod.version}`;
     if (packages.has(resolvedKey)) return;
     packages.set(resolvedKey, mod);
     // Thunderstore profile imports already resolve a compatible closure before review.
-    if (!listedProfile) for (const dependency of mod.dependencies) await resolve(dependency);
+    if (!thunderstoreProfile) for (const dependency of mod.dependencies) await resolve(dependency);
   }
 
   for (const ref of roots) await resolve(ref);
@@ -337,11 +339,11 @@ if (!app.requestSingleInstanceLock()) {
     handle('download-history', () => history.list());
     handle('clear-finished-downloads', gameId => history.clearFinished(gameId));
     handle('finish-download', (id, error, profile) => error ? history.fail(id, error) : history.complete(id, profile));
-    handle('download-packages', async (gameId, refs, context, listedProfile) => {
+    handle('download-packages', async (gameId, refs, context, thunderstoreProfile) => {
       const info = context ?? { id: randomUUID(), profileId: `${gameId}-default`, profileName: 'Default', label: 'Mod download' };
       await history.start({ ...info, gameId });
       try {
-        const result = await downloadPackages(cache, gameId, refs, history, info.id, listedProfile === true);
+        const result = await downloadPackages(cache, gameId, refs, history, info.id, thunderstoreProfile === true);
         await history.ready(info.id);
         if (!context) await history.complete(info.id);
         return result;

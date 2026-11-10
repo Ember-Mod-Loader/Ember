@@ -347,6 +347,25 @@ test('Thunderstore import distinguishes an unavailable profile from retryable se
   await assert.rejects(() => offline.resolveThunderstoreProfile(key, 'peak'), /Could not check Team\/Plugin v1\.0\.0.*HTTP 503/);
 });
 
+test('profile review and stored profile retain an exact unlisted dependency', async () => {
+  const client = createSharingClient({
+    fetchImpl: async () => new Response(nativePayload([nativeMod('Team-Plugin')])),
+    resolvePackage: async (gameId, ref) => ref.name === 'Plugin'
+      ? packageFor(gameId, ref, [{ namespace: 'Team', name: 'Legacy', version: '1.2.3' }])
+      : { ...packageFor(gameId, ref), unlisted: true },
+  });
+  const json = await client.resolveThunderstoreProfile(key, 'lethal-company');
+  assert.deepEqual(JSON.parse(json).unlistedMods, [{ namespace: 'Team', name: 'Legacy', version: '1.2.3' }]);
+  const { createManager } = await import('../src/model.js');
+  const manager = createManager({ getItem: () => null, setItem: () => {} }, { live: true });
+  const plan = manager.readImport(json);
+  const imported = manager.importProfile(json, plan.mods.map(entry => entry.package));
+  const legacy = imported.mods.find(entry => entry.package.name === 'Legacy');
+  assert.equal(legacy.package.unlisted, true);
+  assert.equal(legacy.version, '1.2.3');
+  assert.equal(legacy.enabled, true);
+});
+
 test('Thunderstore import validates inputs before network use, preserves Ember-mode checks, and refuses cross-game metadata', async () => {
   let calls = 0;
   const client = createSharingClient({ fetchImpl: async () => { calls++; return new Response(nativePayload([nativeMod('Team-Plugin')])); },

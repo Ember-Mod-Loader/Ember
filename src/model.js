@@ -145,6 +145,7 @@ function readPackage(value, gameId, allowPreview = false) {
     deprecated: value.deprecated === true,
     pinned: value.pinned === true,
     nsfw: value.nsfw === true,
+    ...(value.unlisted === true ? { unlisted: true } : {}),
     dependencies: value.dependencies.map(ref => readReference(ref, gameId)),
   };
 }

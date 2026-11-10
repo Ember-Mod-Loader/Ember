@@ -166,7 +166,7 @@ test('exact-version downloads reuse cached listing tags and flags without an ext
   assert.equal(api.requests.length, 2);
 });
 
-test('profile lookups require the game listing, reuse its latest version, and resolve only the requested older version', async t => {
+test('profile lookups reuse the game listing for its latest version and resolve only the requested older version', async t => {
   const api = service(t, ({ pathname }) => {
     if (pathname.includes('/listing/')) {
       return Response.json(listing(pathname.includes('/OldPlugin/')
@@ -179,9 +179,9 @@ test('profile lookups require the game listing, reuse its latest version, and re
       dependencies: ['Shared-Team-Runtime-2.10.0'],
     });
   });
-  const latest = await api.fetchListedPackageVersion(gameId, 'Team-Name', 'Plugin', '1.2.3');
+  const latest = await api.fetchProfilePackageVersion(gameId, 'Team-Name', 'Plugin', '1.2.3');
   assert.equal(latest.version, '1.2.3');
-  const older = await api.fetchListedPackageVersion(gameId, 'Team-Name', 'OldPlugin', '1.0.0');
+  const older = await api.fetchProfilePackageVersion(gameId, 'Team-Name', 'OldPlugin', '1.0.0');
   assert.equal(older.version, '1.0.0');
   assert.equal(older.dependencies[0].version, '2.10.0');
   assert.deepEqual(api.requests.map(url => url.pathname), [
@@ -207,8 +207,9 @@ test('profile lookups distinguish unavailable packages from unexpected metadata 
       is_active: name === 'InactiveVersion' ? false : 'no', dependencies: [],
     });
   });
-  const lookup = name => api.fetchListedPackageVersion(gameId, 'Team-Name', name, '1.0.0');
-  for (const name of ['Unlisted', 'Restricted', 'UnknownVersion', 'InactiveVersion']) {
+  const lookup = (name, options) => api.fetchProfilePackageVersion(gameId, 'Team-Name', name, '1.0.0', options);
+  await assert.rejects(() => lookup('Unlisted', { allowUnlisted: false }), api.ThunderstorePackageUnavailableError);
+  for (const name of ['Restricted', 'UnknownVersion', 'InactiveVersion']) {
     await assert.rejects(() => lookup(name), api.ThunderstorePackageUnavailableError);
   }
   assert(api.requests.every(({ pathname }) => !pathname.includes('/api/experimental/package/Team-Name/Unlisted/') &&
@@ -216,6 +217,66 @@ test('profile lookups distinguish unavailable packages from unexpected metadata 
   for (const name of ['ServiceError', 'OtherGame', 'MalformedVersion']) {
     await assert.rejects(() => lookup(name), error => !(error instanceof api.ThunderstorePackageUnavailableError));
   }
+});
+
+test('profile imports can restore an active exact version absent from its game catalog', async t => {
+  const api = service(t, ({ pathname }) => {
+    if (pathname.includes('/listing/')) return new Response(null, { status: 404 });
+    if (pathname.endsWith('/Legacy/')) {
+      return Response.json({
+        namespace: 'Team-Name', name: 'Legacy', is_deprecated: true,
+        community_listings: [{ community: gameId, review_status: 'rejected', has_nsfw_content: false }],
+      });
+    }
+    assert.equal(pathname, '/api/experimental/package/Team-Name/Legacy/1.0.0/');
+    return Response.json({
+      namespace: 'Team-Name', name: 'Legacy', version_number: '1.0.0', is_active: true,
+      dependencies: ['Shared-Team-Runtime-2.10.0'],
+    });
+  });
+  const restored = await api.fetchProfilePackageVersion(gameId, 'Team-Name', 'Legacy', '1.0.0');
+  assert.equal(restored.unlisted, true);
+  assert.equal(restored.deprecated, true);
+  assert.equal(restored.url, '');
+  assert.equal(restored.version, '1.0.0');
+  assert.equal(restored.downloadUrl, 'https://thunderstore.io/package/download/Team-Name/Legacy/1.0.0/');
+  assert.equal(restored.dependencies[0].id, 'lethal-company/Shared-Team/Runtime');
+  assert.deepEqual(api.requests.map(url => url.pathname), [
+    '/api/cyberstorm/listing/lethal-company/Team-Name/Legacy/',
+    '/api/experimental/package/Team-Name/Legacy/',
+    '/api/experimental/package/Team-Name/Legacy/1.0.0/',
+  ]);
+  await assert.rejects(() => api.fetchPackage(gameId, 'Team-Name', 'Legacy'), /could not find/i);
+  await assert.rejects(() => api.fetchPackageUpdate(gameId, 'Team-Name', 'Legacy'), /could not find/i);
+  assert(api.requests.slice(3).every(url => url.pathname.includes('/listing/')));
+});
+
+test('profile fallback requires eligible community metadata and an active exact version', async t => {
+  const api = service(t, ({ pathname }) => {
+    if (pathname.includes('/listing/')) return new Response(null, { status: 404 });
+    const [, , , , namespace, name, version] = pathname.split('/');
+    if (version) {
+      if (name === 'VersionMissing') return new Response(null, { status: 404 });
+      assert.equal(name, 'Inactive');
+      return Response.json({ namespace, name, version_number: version, is_active: false, dependencies: [] });
+    }
+    if (name === 'PackageMissing') return new Response(null, { status: 404 });
+    if (name === 'ServiceError') return new Response(null, { status: 503 });
+    return Response.json({
+      namespace: name === 'WrongIdentity' ? 'Other-Team' : namespace,
+      name,
+      community_listings: [{
+        community: name === 'OtherGame' ? 'repo' : gameId,
+        has_nsfw_content: name === 'Restricted' ? true : name === 'Unknown' ? undefined : false,
+      }],
+    });
+  });
+  const lookup = name => api.fetchProfilePackageVersion(gameId, 'Team-Name', name, '1.0.0');
+  for (const name of ['PackageMissing', 'OtherGame', 'Restricted', 'Unknown', 'VersionMissing', 'Inactive']) {
+    await assert.rejects(() => lookup(name), api.ThunderstorePackageUnavailableError);
+  }
+  await assert.rejects(() => lookup('WrongIdentity'), /invalid package metadata/i);
+  await assert.rejects(() => lookup('ServiceError'), /HTTP 503/);
 });
 
 test('invalid queries, package identities, and versions do not send network requests', async t => {
@@ -226,7 +287,7 @@ test('invalid queries, package identities, and versions do not send network requ
   await assert.rejects(() => api.fetchPackage(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
   await assert.rejects(() => api.fetchPackageUpdate(gameId, '../escape', 'Plugin'), /invalid Thunderstore package/i);
   await assert.rejects(() => api.fetchPackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
-  await assert.rejects(() => api.fetchListedPackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
+  await assert.rejects(() => api.fetchProfilePackageVersion(gameId, 'Team-Name', 'Plugin', '../1.2.3'), /invalid Thunderstore package version/i);
   assert.deepEqual(api.requests, []);
 });
 

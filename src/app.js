@@ -737,6 +737,7 @@ function renderDialog() {
             : `<p>${details?.loading ? 'Loading dependencies…' : details?.error ? 'Dependency information is unavailable.' : 'This package has no dependencies.'}</p>`}</section>
           <section class="detail-section"><h4>Active profile</h4><p>${esc(manager.profile.name)} · ${installed ? `v${esc(installed.version)} ${installed.enabled ? 'enabled' : 'disabled'}` : manager.live ? 'Available to download' : 'Available to install'}</p></section>
           ${manager.live && mod.url ? button('View on Thunderstore', 'diagonal', 'open-package-page', { id }) : ''}
+          ${mod.unlisted ? `<p class="demo-note">${icon('info', 17)}<span>Thunderstore provides this version for shared profiles outside its public catalog.</span></p>` : ''}
           ${details?.error ? `<p class="demo-note">${icon('info', 17)}<span>${esc(details.error)}</span></p>` : ''}
         </div>
         <div class="dialog-footer">${iconButton(favorite ? 'Remove from favorites' : 'Add to favorites', 'heart', 'favorite', id, favorite)}
@@ -1076,6 +1077,11 @@ async function showDetails(id) {
     }
   }
   if (!mod) return;
+  if (mod.unlisted) {
+    ui.detail = null;
+    openDialog('mod', id);
+    return;
+  }
   const request = { id, loading: true, error: '' };
   ui.detail = request;
   openDialog('mod', id);
@@ -1670,7 +1676,8 @@ document.addEventListener('submit', async event => {
         const warnings = Array.isArray(payload.importWarnings) ? payload.importWarnings.filter(item => typeof item === 'string') : [];
         const skippedMods = Array.isArray(payload.skippedMods) ? payload.skippedMods.filter(item => typeof item === 'string') : [];
         const versionChanges = Array.isArray(payload.versionChanges) ? payload.versionChanges : [];
-        if (warnings.length || skippedMods.length || versionChanges.length) {
+        const unlistedMods = Array.isArray(payload.unlistedMods) ? payload.unlistedMods : [];
+        if (warnings.length || skippedMods.length || versionChanges.length || unlistedMods.length) {
           const modCount = payload.mods.length;
           const modLabel = plural(modCount, 'mod');
           const label = versionChanges.length ? 'Import with changes' : modCount ? `Import ${modLabel}` : 'Import profile';
@@ -1682,6 +1689,10 @@ document.addEventListener('submit', async event => {
               <p>Ember will use these versions to meet the profile’s mod requirements if you confirm.</p>
               <ul>${versionChanges.map(({ namespace, name, from, to }) =>
                 `<li><strong>${esc(name)}</strong> by ${esc(namespace)} · v${esc(from)} → v${esc(to)}</li>`).join('')}</ul>` : ''}
+            ${unlistedMods.length ? `<p><strong>Unlisted mods included</strong></p>
+              <p>Thunderstore still serves these exact versions for this game. They are absent from its public catalog.</p>
+              <ul>${unlistedMods.map(({ namespace, name, version }) =>
+                `<li><strong>${esc(name)}</strong> by ${esc(namespace)} · v${esc(version)}</li>`).join('')}</ul>` : ''}
             ${skippedMods.length ? `<p><strong>${skippedMods.length} ${skippedMods.length === 1 ? 'mod' : 'mods'} will be skipped</strong></p>
             <ul>${skippedMods.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
             ${warnings.length ? `<details><summary>Extra files from the profile export</summary>

@@ -1,7 +1,7 @@
-# Ember 0.6.11
+# Ember 0.6.12
 
-- Thunderstore profile imports show required version changes before you confirm, including the old and proposed versions.
-- When a required upgrade is unavailable, the review identifies affected mods and keeps compatible versions of the remaining mods.
+- Shared profiles can restore unlisted mods when Thunderstore still serves the exact active version and associates the package with the selected game.
+- The import review lists these mods before downloading them.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
