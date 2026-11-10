@@ -37,6 +37,57 @@ test('downloads follow the expected CDN route, coalesce concurrency, and reuse t
   assert.deepEqual(await readFile(path.join(gameFolder(root), first.filename)), archive);
 });
 
+test('archive transfers share a six-download limit and free a slot after a failure', { timeout: 10_000 }, async t => {
+  const root = await temporaryDirectory(t);
+  const active = new Map();
+  let peak = 0;
+  let started = 0;
+  let sixStarted, sevenStarted;
+  const firstWave = new Promise(resolve => { sixStarted = resolve; });
+  const nextTransfer = new Promise(resolve => { sevenStarted = resolve; });
+  let finishImmediately = false;
+  const cache = createPackageCache(root, async url => {
+    const name = url.pathname.split('/')[4];
+    if (name === packageId.name || finishImmediately) return new Response(archive);
+    return new Response(new ReadableStream({
+      start(controller) {
+        active.set(name, controller);
+        peak = Math.max(peak, active.size);
+        started++;
+        if (started === 6) sixStarted();
+        if (started === 7) sevenStarted();
+      },
+    }));
+  });
+  const finishTransfers = () => {
+    finishImmediately = true;
+    for (const controller of active.values()) {
+      controller.enqueue(archive);
+      controller.close();
+    }
+    active.clear();
+  };
+  t.after(finishTransfers);
+
+  await cache.downloadPackage(packageId);
+  const downloads = Promise.allSettled(Array.from({ length: 8 }, (_, index) =>
+    cache.downloadPackage({ ...packageId, name: `Plugin${index}` })));
+  await firstWave;
+  assert.equal((await cache.downloadPackage(packageId)).cached, true);
+  assert.equal(started, 6);
+  const [failed, controller] = active.entries().next().value;
+  active.delete(failed);
+  controller.error(new Error('Connection lost'));
+  await nextTransfer;
+  assert.equal(active.size, 6);
+  finishTransfers();
+
+  const results = await downloads;
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 7);
+  assert.equal(peak, 6);
+  assert.equal((await cache.downloadPackage({ ...packageId, name: failed })).cached, false);
+});
+
 test('download cache keeps Thunderstore package casing distinct on Windows', async t => {
   const root = await temporaryDirectory(t);
   const cache = createPackageCache(root, async () => new Response(archive));

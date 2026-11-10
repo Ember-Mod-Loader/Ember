@@ -89,7 +89,7 @@ Review a profile before sharing it, since exports can include its name, package 
 
 If a mod needs a disabled requirement, Ember offers to enable the required mods together. Disabling or deleting a requirement lists the mods that depend on it. You can change just the selected mod or all affected mods. Choosing an override may leave dependent mods unable to load.
 
-The **Downloads** tab shows progress and the destination profile. Completed entries clear after 30 seconds; active downloads and failures stay visible. Clearing download history leaves your mods and cached packages in place.
+You can start another mod download while one is running. The **Downloads** tab shows progress and the destination profile. Completed entries clear after 30 seconds and failed entries clear after five minutes. Choose **Clear finished** to remove both types of history entries for the selected game.
 
 </details>
 

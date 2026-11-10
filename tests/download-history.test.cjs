@@ -5,7 +5,7 @@ const { watch } = require('node:fs');
 const { mkdir, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
-const { createDownloadHistory, COMPLETED_RETENTION_MS } = require('../electron/download-history.cjs');
+const { createDownloadHistory, COMPLETED_RETENTION_MS, FAILED_RETENTION_MS } = require('../electron/download-history.cjs');
 const { temporaryDirectory } = require('./temp-directory.cjs');
 
 function operation(overrides = {}) {
@@ -230,7 +230,7 @@ test('progress saves coalesce the latest bytes and concurrent operations stay di
   assert.equal(JSON.parse(await readFile(file, 'utf8')).records.filter(record => record.status === 'failed').length, 3);
 });
 
-test('completed entries expire thirty seconds after completion while active and failed entries remain', async t => {
+test('completed entries expire after thirty seconds and failures after five minutes', async t => {
   const root = await temporaryDirectory(t);
   const file = path.join(root, 'history.json');
   const clock = cleanupClock();
@@ -240,7 +240,8 @@ test('completed entries expire thirty seconds after completion while active and 
   const failed = await history.start(operation());
   await history.fail(failed, 'Keep this error visible');
   const finishing = await history.start(operation());
-  await clock.advance(120_000);
+  const downloadTime = 120_000;
+  await clock.advance(downloadTime);
   await history.ready(finishing);
   await history.complete(finishing);
   await clock.advance(COMPLETED_RETENTION_MS - 1);
@@ -250,14 +251,22 @@ test('completed entries expire thirty seconds after completion while active and 
   assert.equal(history.list().find(record => record.id === active).status, 'resolving');
   assert.equal(history.list().find(record => record.id === failed).error, 'Keep this error visible');
   assert.deepEqual(events.filter(event => event.removed), [{ id: finishing, removed: true }]);
+  await clock.advance(FAILED_RETENTION_MS - downloadTime - COMPLETED_RETENTION_MS - 1);
+  assert.equal(history.list().find(record => record.id === failed).status, 'failed');
+  await clock.advance(1);
+  assert.deepEqual(history.list().map(record => record.id), [active]);
+  assert.deepEqual(events.filter(event => event.removed), [{ id: finishing, removed: true }, { id: failed, removed: true }]);
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).records, history.list());
 });
 
-test('restart prunes expired completions and keeps the remaining lifetime of recent completions', async t => {
+test('restart prunes expired completions and failures and keeps recent completions', async t => {
   const root = await temporaryDirectory(t);
   const file = path.join(root, 'history.json');
   const clock = cleanupClock();
   const first = await createDownloadHistory(file, undefined, clock.options);
+  const failed = await first.start(operation());
+  await first.fail(failed, 'Old failure');
+  await clock.advance(FAILED_RETENTION_MS - 35_000);
   const old = await completedOperation(first);
   await clock.advance(20_000);
   const recent = await completedOperation(first);
@@ -266,16 +275,17 @@ test('restart prunes expired completions and keeps the remaining lifetime of rec
   clock.jump(15_000);
   const restarted = await createDownloadHistory(file, undefined, clock.options);
   assert.equal(restarted.list().some(record => record.id === old), false);
+  assert.equal(restarted.list().some(record => record.id === failed), false);
   assert.equal(restarted.list().find(record => record.id === recent).status, 'complete');
   assert.equal(restarted.list().find(record => record.id === interrupted).status, 'failed');
-  assert.equal(JSON.parse(await readFile(file, 'utf8')).records.some(record => record.id === old), false);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).records, restarted.list());
   await clock.advance(14_999);
   assert.equal(restarted.list().some(record => record.id === recent), true);
   await clock.advance(1);
   assert.deepEqual(restarted.list().map(record => record.id), [interrupted]);
 });
 
-test('clear completed is scoped to the chosen game and preserves concurrent completion', async t => {
+test('clear finished removes completions and failures for one game and preserves concurrent completion', async t => {
   const root = await temporaryDirectory(t);
   const file = path.join(root, 'history.json');
   const clock = cleanupClock();
@@ -284,20 +294,22 @@ test('clear completed is scoped to the chosen game and preserves concurrent comp
   const repo = await completedOperation(history, { gameId: 'repo', profileId: 'repo-default' });
   const failed = await history.start(operation());
   await history.fail(failed, 'Connection failed');
+  const failedRepo = await history.start(operation({ gameId: 'repo', profileId: 'repo-default' }));
+  await history.fail(failedRepo, 'Connection failed in another game');
   const finishing = await history.start(operation());
   await history.ready(finishing);
   const before = history.list();
-  assert.throws(() => history.clearCompleted('../bad'), /valid game/);
-  assert.throws(() => history.clearCompleted(undefined), /valid game/);
+  assert.throws(() => history.clearFinished('../bad'), /valid game/);
+  assert.throws(() => history.clearFinished(undefined), /valid game/);
   assert.deepEqual(history.list(), before);
-  const [removed] = await Promise.all([history.clearCompleted('lethal-company'), history.complete(finishing)]);
-  assert.deepEqual(removed, [old]);
+  const [removed] = await Promise.all([history.clearFinished('lethal-company'), history.complete(finishing)]);
+  assert.deepEqual(new Set(removed), new Set([old, failed]));
   assert.equal(history.list().find(record => record.id === finishing).status, 'complete');
   assert.equal(history.list().find(record => record.id === repo).status, 'complete');
-  assert.equal(history.list().find(record => record.id === failed).status, 'failed');
-  assert.deepEqual(await history.clearCompleted('lethal-company'), [finishing]);
-  assert.deepEqual(await history.clearCompleted('lethal-company'), []);
-  assert.deepEqual(new Set(history.list().map(record => record.id)), new Set([repo, failed]));
+  assert.equal(history.list().find(record => record.id === failedRepo).status, 'failed');
+  assert.deepEqual(await history.clearFinished('lethal-company'), [finishing]);
+  assert.deepEqual(await history.clearFinished('lethal-company'), []);
+  assert.deepEqual(new Set(history.list().map(record => record.id)), new Set([repo, failedRepo]));
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).records, history.list());
 });
 
@@ -312,7 +324,7 @@ test('failed cleanup rolls back without removal events and retries automatically
   const before = history.list();
   await rm(file);
   await mkdir(file);
-  await assert.rejects(history.clearCompleted('lethal-company'), /could not clear download history/);
+  await assert.rejects(history.clearFinished('lethal-company'), /could not clear download history/);
   assert.deepEqual(history.list(), before);
   await clock.advance(COMPLETED_RETENTION_MS);
   assert.deepEqual(history.list(), before);

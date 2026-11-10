@@ -9,6 +9,7 @@ const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis', 'risk-of-rai
 const DOWNLOAD_HOSTS = new Set(['thunderstore.io', 'old.thunderstore.io', 'www.thunderstore.io']);
 const ARCHIVE_HOSTS = new Set(['cdn.thunderstore.io', 'ccdn.thunderstore.io', 'gcdn.thunderstore.io']);
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+const MAX_ARCHIVE_TRANSFERS = 6;
 const MAX_ARCHIVE_BYTES = 1024 ** 3;
 const ZIP_HEADER = 0x04034b50;
 const ZIP_END = 0x06054b50;
@@ -152,6 +153,8 @@ async function storeArchive(fetchArchive, identity, archiveName, target, report)
 
 function createPackageCache(root, fetchArchive = globalThis.fetch) {
   const pending = new Map();
+  const waitingTransfers = [];
+  let activeTransfers = 0;
 
   async function downloadPackage(input, onProgress) {
     const identity = packageIdentity(input);
@@ -162,7 +165,7 @@ function createPackageCache(root, fetchArchive = globalThis.fetch) {
     const target = path.join(folder, filename);
     let transfer = pending.get(target);
     if (!transfer) {
-      transfer = { listeners: new Set(), latest: { received: 0, total: null, status: 'downloading' }, promise: null };
+      transfer = { listeners: new Set(), latest: null, promise: null };
       pending.set(target, transfer);
       const report = progress => {
         transfer.latest = Object.freeze(progress);
@@ -177,15 +180,30 @@ function createPackageCache(root, fetchArchive = globalThis.fetch) {
           report({ received: bytes, total: bytes, status: 'complete', cached: true });
           return { filename, bytes, cached: true };
         }
-        const savedBytes = await storeArchive(fetchArchive, identity, archiveName, target, report);
-        report({ received: savedBytes, total: savedBytes, status: 'complete', cached: false });
-        return { filename, bytes: savedBytes, cached: false };
+        if (activeTransfers === MAX_ARCHIVE_TRANSFERS) {
+          await new Promise(resolve => waitingTransfers.push(resolve));
+        } else {
+          activeTransfers++;
+        }
+        try {
+          report({ received: 0, total: null, status: 'downloading' });
+          const savedBytes = await storeArchive(fetchArchive, identity, archiveName, target, report);
+          report({ received: savedBytes, total: savedBytes, status: 'complete', cached: false });
+          return { filename, bytes: savedBytes, cached: false };
+        } finally {
+          // Pass the occupied slot directly to the next transfer in line.
+          const next = waitingTransfers.shift();
+          if (next) next();
+          else activeTransfers--;
+        }
       })().finally(() => pending.delete(target));
     }
     const listener = typeof onProgress === 'function' ? onProgress : null;
     if (listener) {
       transfer.listeners.add(listener);
-      try { listener(transfer.latest); } catch {}
+      if (transfer.latest) {
+        try { listener(transfer.latest); } catch {}
+      }
     }
     try {
       return await transfer.promise;

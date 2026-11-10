@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('modRelayDesktop', {
   fetchPackageUpdate: (gameId, namespace, name) => ipcRenderer.invoke('modrelay:package-update', gameId, namespace, name),
   downloadPackages: (gameId, refs, context, listedProfile) => ipcRenderer.invoke('modrelay:download-packages', gameId, refs, context, listedProfile),
   downloadHistory: () => ipcRenderer.invoke('modrelay:download-history'),
-  clearCompletedDownloads: gameId => ipcRenderer.invoke('modrelay:clear-completed-downloads', gameId),
+  clearFinishedDownloads: gameId => ipcRenderer.invoke('modrelay:clear-finished-downloads', gameId),
   finishDownload: (id, error, profile) => ipcRenderer.invoke('modrelay:finish-download', id, error, profile),
   onDownloadProgress: callback => {
     const listener = (_event, record) => callback(record);

@@ -1,7 +1,8 @@
-# Ember 0.6.9
+# Ember 0.6.10
 
-- Thunderstore profile imports preserve text migration markers, including the files LateJoinPlus uses to remember settings migrations.
-- Extra files in a profile export appear in the import review. Ember downloads mods from their original Thunderstore packages and applies supported profile settings.
+- Start another mod download or update while one is running. Each download saves to the profile it started from.
+- Completed download entries clear after 30 seconds. Failed entries stay visible for five minutes so you can read the error.
+- **Clear finished** removes completed and failed entries for the selected game.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

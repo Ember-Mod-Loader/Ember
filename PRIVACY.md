@@ -1,6 +1,6 @@
 # Privacy
 
-Applies to Ember 0.6.9.
+Applies to Ember 0.6.10.
 
 ## On your device
 
@@ -14,7 +14,7 @@ Ember also stores a small update-attempt record containing update versions and t
 
 The size-limited local `logs/app.log` file records the app version, startup and shutdown events, updater activity, process exits, and error details. Error details may include local paths. Old log content is trimmed as the file grows. These diagnostics are not uploaded automatically or sent to the presence service.
 
-Completed download-history entries clear automatically after 30 seconds, or when you choose Clear completed. This clears the history entries only; profiles, installed mods, and cached download files stay on your device.
+Completed download entries clear after 30 seconds and failed entries clear after five minutes. **Clear finished** removes both types of entries for the selected game. These actions affect only download history.
 
 A profile code or JSON export can contain the profile name, game, and package list, along with any settings included in that profile. Anyone who receives an export can read its contents. Review it before sharing.
 

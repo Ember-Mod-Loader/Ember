@@ -160,9 +160,11 @@ async function downloadPackages(cache, gameId, roots, history, operationId, list
   const resolved = [...packages.values()].reverse();
   history.plan(operationId, resolved);
   for (let index = 0; index < resolved.length; index += 3) {
-    await Promise.all(resolved.slice(index, index + 3).map(mod => cache.downloadPackage({
+    const batch = await Promise.allSettled(resolved.slice(index, index + 3).map(mod => cache.downloadPackage({
       gameId, namespace: mod.namespace, name: mod.name, version: mod.version,
     }, progress => history.progress(operationId, `${mod.id}@${mod.version}`, progress))));
+    const failed = batch.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
   }
   return resolved;
 }
@@ -333,7 +335,7 @@ if (!app.requestSingleInstanceLock()) {
     handle('package-details', fetchPackage);
     handle('package-update', fetchPackageUpdate);
     handle('download-history', () => history.list());
-    handle('clear-completed-downloads', gameId => history.clearCompleted(gameId));
+    handle('clear-finished-downloads', gameId => history.clearFinished(gameId));
     handle('finish-download', (id, error, profile) => error ? history.fail(id, error) : history.complete(id, profile));
     handle('download-packages', async (gameId, refs, context, listedProfile) => {
       const info = context ?? { id: randomUUID(), profileId: `${gameId}-default`, profileName: 'Default', label: 'Mod download' };

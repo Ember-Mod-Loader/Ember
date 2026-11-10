@@ -30,7 +30,8 @@ const compactNumber = new Intl.NumberFormat('en', { notation: 'compact', maximum
 const displayTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const emptyFeed = () => ({ mods: [], count: 0, categories: [], hasMore: false, page: 0, loading: false, error: '' });
-const ui = { page: 'browse', query: '', category: '', sort: '', showDeprecated: false, library: 'all', menu: false, dialog: null, feed: emptyFeed(), downloading: false, detail: null, gameStatus: undefined, gameBusy: false, downloads: [] };
+const ui = { page: 'browse', query: '', category: '', sort: '', showDeprecated: false, library: 'all', menu: false, dialog: null, feed: emptyFeed(), importingProfile: false, detail: null, gameStatus: undefined, gameBusy: false, downloads: [] };
+const pendingModDownloads = new Map();
 const fetchModUpdate = desktop?.fetchPackageUpdate ?? desktop?.fetchPackage;
 const modUpdateScanner = fetchModUpdate && createModUpdateScanner({ fetchPackage: fetchModUpdate });
 let modUpdateVisit;
@@ -138,6 +139,15 @@ function updatePresence(value) {
 function button(label, glyph, action, options = {}) {
   const { id, style = '', disabled = false, end, pressed } = options;
   return `<button type="button" class="button ${style}" data-action="${action}"${id !== undefined ? ` data-id="${esc(id)}"` : ''}${disabled ? ' disabled' : ''}${pressed !== undefined ? ` aria-pressed="${pressed}"` : ''}>${glyph ? icon(glyph, 16) : ''}<span>${esc(label)}</span>${end ? icon(end, 15) : ''}</button>`;
+}
+
+function modDownloadPending(id) {
+  return pendingModDownloads.get(manager.profile.id)?.has(id) ?? false;
+}
+
+function modDownloadButton(label, glyph, action, id, style, disabled = false) {
+  const pending = modDownloadPending(id);
+  return button(pending ? 'Downloading…' : label, pending ? 'clock' : glyph, action, { id, style, disabled: disabled || pending });
 }
 
 function iconButton(label, glyph, action, id, selected = false) {
@@ -380,7 +390,10 @@ function modCard(mod) {
     <p class="mod-description">${esc(mod.description)}</p>
     <div class="mod-card-bottom">
       <div class="mod-stats"><span class="downloads" title="${mod.downloads.toLocaleString()} downloads">${icon('download', 14)} ${compactNumber.format(mod.downloads)}</span>${manager.live ? `<span class="mod-updated">${updateDate(mod.updatedAt)}</span>` : ''}</div>
-      ${entry ? button(entry.hasUpdate ? 'Update' : 'Installed', entry.hasUpdate ? 'refresh' : 'check', entry.hasUpdate ? 'update' : 'mod-details', { id: mod.id, style: entry.hasUpdate ? 'small outline-purple' : 'small installed', disabled: entry.hasUpdate && ui.downloading }) : button(manager.live ? 'Download' : 'Install', manager.live ? 'download' : 'plus', 'install', { id: mod.id, style: 'small outline-purple', disabled: manager.live && ui.downloading })}
+      ${entry && !entry.hasUpdate && !modDownloadPending(mod.id)
+        ? button('Installed', 'check', 'mod-details', { id: mod.id, style: 'small installed' })
+        : modDownloadButton(entry ? 'Update' : manager.live ? 'Download' : 'Install',
+          entry ? 'refresh' : manager.live ? 'download' : 'plus', entry ? 'update' : 'install', mod.id, 'small outline-purple')}
     </div>
   </article>`;
 }
@@ -414,8 +427,8 @@ function libraryPage() {
   const checking = modUpdateWork?.visit.profileId === profile.id;
   const actions = button('Share mods', 'upload', 'export', { id: profile.id }) + (manager.live
     ? button('Open downloads', 'file', 'open-downloads') +
-      (updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary', disabled: ui.downloading }) : '') +
-      (installed.length ? button(checking ? 'Checking…' : 'Check for updates', 'refresh', 'check-updates', { disabled: checking || ui.downloading || !modUpdateScanner }) : '')
+      (updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary', disabled: updates.every(entry => modDownloadPending(entry.id)) }) : '') +
+      (installed.length ? button(checking ? 'Checking…' : 'Check for updates', 'refresh', 'check-updates', { disabled: checking || !modUpdateScanner }) : '')
     : updates.length ? button('Update all', 'refresh', 'update-all', { style: 'primary' }) : button('Browse mods', 'compass', 'navigate', { id: 'browse' }));
   return `${heading('YOUR COLLECTION', pageLabel('library'), '', actions)}
     <div class="stats-grid">
@@ -446,7 +459,7 @@ function libraryResults() {
         ${modArt(mod, 'list-art')}<span class="mod-identity"><strong>${esc(mod.name)}</strong><small>${esc(mod.author)} · v${esc(version)}</small>${hasUpdate ? `<small class="mod-update-version">v${esc(latestVersion)} available</small>` : ''}${modLabels(manager.packageById(id) ?? mod)}${manager.live ? `<small>${updateDate(manager.packageById(id)?.updatedAt ?? mod.updatedAt)}</small>` : ''}</span>
       </button>
       <div class="row-actions">
-        ${hasUpdate ? button('Update', 'refresh', 'update', { id, style: 'small outline-purple', disabled: ui.downloading }) : ''}
+        ${hasUpdate || modDownloadPending(id) ? modDownloadButton('Update', 'refresh', 'update', id, 'small outline-purple') : ''}
         <label class="switch-label"><input type="checkbox" class="switch" data-toggle-mod="${esc(id)}" aria-label="Enable ${esc(mod.name)}"${enabled ? ' checked' : ''}><span>${enabled ? 'Enabled' : 'Disabled'}</span></label>
         ${iconButton(`Remove ${mod.name}`, 'trash', 'remove-request', id)}
       </div>
@@ -455,7 +468,7 @@ function libraryResults() {
 
 function profilesPage() {
   return `${heading('WORKSPACE', 'Profiles', `Build separate mod lists and configs for ${manager.game.name}.`,
-    button('Import profile', 'upload', 'import', { disabled: manager.live && ui.downloading }) + button('New profile', 'plus', 'profile-create', { style: 'primary' }))}
+    button('Import profile', 'upload', 'import', { disabled: ui.importingProfile }) + button('New profile', 'plus', 'profile-create', { style: 'primary' }))}
     <div class="profile-grid">${manager.profiles.map(profile => {
       const active = profile.id === manager.profile.id;
       return `<article class="profile-card${active ? ' active-profile' : ''}">
@@ -486,10 +499,10 @@ function fileSize(bytes) {
 }
 
 function downloadsPage() {
-  const actions = manager.live ? button('Clear completed', 'check', 'clear-completed-downloads', {
-    disabled: ui.clearingDownloads || !desktop?.clearCompletedDownloads || !gameDownloads().some(item => item.status === 'complete'),
+  const actions = manager.live ? button('Clear finished', 'check', 'clear-finished-downloads', {
+    disabled: ui.clearingDownloads || !desktop?.clearFinishedDownloads || !hasFinishedDownloads(),
   }) + button('Open downloads folder', 'file', 'open-downloads') : '';
-  return `${heading('YOUR COLLECTION', 'Downloads', 'Completed downloads clear automatically after 30 seconds.', actions)}
+  return `${heading('YOUR COLLECTION', 'Downloads', 'Completed entries clear after 30 seconds. Failed entries clear after five minutes.', actions)}
     <div id="download-content">${downloadsContent()}</div>`;
 }
 
@@ -567,8 +580,8 @@ function updateDownloadRecord(record) {
 }
 
 function refreshDownloadIndicators() {
-  const clear = app.querySelector('[data-action="clear-completed-downloads"]');
-  if (clear) clear.disabled = Boolean(ui.clearingDownloads || !desktop?.clearCompletedDownloads || !gameDownloads().some(item => item.status === 'complete'));
+  const clear = app.querySelector('[data-action="clear-finished-downloads"]');
+  if (clear) clear.disabled = Boolean(ui.clearingDownloads || !desktop?.clearFinishedDownloads || !hasFinishedDownloads());
   const nav = app.querySelector('[data-id="downloads"].nav-item');
   if (nav) {
     nav.querySelector('small')?.remove();
@@ -577,12 +590,16 @@ function refreshDownloadIndicators() {
   }
 }
 
-async function clearCompletedDownloads() {
-  if (ui.clearingDownloads || !desktop?.clearCompletedDownloads) return;
+function hasFinishedDownloads() {
+  return gameDownloads().some(item => item.status === 'complete' || item.status === 'failed');
+}
+
+async function clearFinishedDownloads() {
+  if (ui.clearingDownloads || !desktop?.clearFinishedDownloads) return;
   ui.clearingDownloads = true;
   refreshDownloadIndicators();
   try {
-    const ids = await desktop.clearCompletedDownloads(manager.game.id);
+    const ids = await desktop.clearFinishedDownloads(manager.game.id);
     for (const id of ids) updateDownloadRecord({ id, removed: true });
   } finally {
     ui.clearingDownloads = false;
@@ -590,28 +607,12 @@ async function clearCompletedDownloads() {
   }
 }
 
-function downloadContext(workspace, profile, label) {
-  const context = { id: crypto.randomUUID(), gameId: profile.gameId ?? workspace.game.id, profileId: profile.id, profileName: profile.name, label };
-  const now = new Date().toISOString();
-  updateDownloadRecord({ ...context, status: 'resolving', createdAt: now, updatedAt: now, packages: [], error: '' });
-  return context;
+function downloadContext(profile, label) {
+  return { id: crypto.randomUUID(), gameId: profile.gameId, profileId: profile.id, profileName: profile.name, label };
 }
 
-async function finishDownload(context, error, profile) {
-  try {
-    if (desktop.finishDownload) {
-      await desktop.finishDownload(context.id, error ? errorMessage(error) : null, profile ? { profileId: profile.id, profileName: profile.name } : undefined);
-      return;
-    }
-  } catch (failure) {
-    error = error ?? failure;
-  }
-  const record = ui.downloads.find(item => item.id === context.id);
-  if (record) updateDownloadRecord({
-    ...record, status: error ? 'failed' : 'complete', error: error ? errorMessage(error) : '',
-    updatedAt: new Date().toISOString(),
-  });
-  if (error) throw error;
+function finishDownload(context, error, profile) {
+  return desktop.finishDownload(context.id, error ? errorMessage(error) : null, profile ? { profileId: profile.id, profileName: profile.name } : undefined);
 }
 
 function settingsPage() {
@@ -676,7 +677,7 @@ function renderDialog() {
       const updates = manager.updates;
       dialog.innerHTML = `${dialogHeader('Mod updates available', `${plural(updates.length, 'mod')} in ${manager.profile.name} ${updates.length === 1 ? 'has an update' : 'have updates'}.`)}
         <ul class="dialog-list profile-update-list" aria-label="Mods with updates" tabindex="0">${updates.map(({ mod, version, latestVersion }) => `<li>${modArt(mod, 'update-art')}<span><strong>${esc(mod.name)}</strong><small>v${esc(version)} → v${esc(latestVersion)}</small></span></li>`).join('')}</ul>
-        <div class="dialog-footer"><button type="button" class="button" data-action="close-dialog" data-initial-focus>Wait</button>${button('Update now', 'refresh', 'update-profile-now', { style: 'primary', disabled: ui.downloading || !updates.length })}</div>`;
+        <div class="dialog-footer"><button type="button" class="button" data-action="close-dialog" data-initial-focus>Wait</button>${button('Update now', 'refresh', 'update-profile-now', { style: 'primary', disabled: updates.every(entry => modDownloadPending(entry.id)) })}</div>`;
       break;
     }
     case 'client-update': {
@@ -740,8 +741,10 @@ function renderDialog() {
         </div>
         <div class="dialog-footer">${iconButton(favorite ? 'Remove from favorites' : 'Add to favorites', 'heart', 'favorite', id, favorite)}
           ${installed
-            ? button(installed.hasUpdate ? 'Download update' : ('View installed mods'), installed.hasUpdate ? 'refresh' : 'layers', installed.hasUpdate ? 'update' : 'navigate', { id: installed.hasUpdate ? id : 'library', style: 'primary', disabled: installed.hasUpdate && ui.downloading })
-            : button(ui.downloading ? 'Downloading…' : 'Download mod', 'download', 'install', { id, style: 'primary', disabled: ui.downloading || details?.loading })}
+            ? installed.hasUpdate || modDownloadPending(id)
+              ? modDownloadButton('Download update', 'refresh', 'update', id, 'primary')
+              : button('View installed mods', 'layers', 'navigate', { id: 'library', style: 'primary' })
+            : modDownloadButton('Download mod', 'download', 'install', id, 'primary', details?.loading)}
         </div>`;
       break;
     }
@@ -1090,30 +1093,32 @@ async function showDetails(id) {
 }
 
 async function downloadLive(mods) {
-  if (ui.downloading || !mods.length) return;
   const workspace = manager;
   const { game, profile } = workspace;
-  const refs = mods.map(({ namespace, name }) => ({ namespace, name }));
-  const context = downloadContext(workspace, profile, mods.length === 1 ? mods[0].name : `${mods.length} mods`);
-  ui.downloading = true;
-  refreshWorkspace(`Downloading ${plural(mods.length, 'package')} from Thunderstore…`);
+  const pending = pendingModDownloads.get(profile.id) ?? new Set();
+  const requested = mods.filter(mod => mod && !pending.has(mod.id));
+  if (!requested.length) return;
+  const roots = new Set(requested.map(mod => mod.id));
+  const refs = requested.map(({ namespace, name }) => ({ namespace, name }));
+  const label = requested.length === 1 ? requested[0].name : plural(requested.length, 'mod');
+  const context = downloadContext(profile, label);
+  for (const id of roots) pending.add(id);
+  pendingModDownloads.set(profile.id, pending);
+  let message;
   try {
+    refreshWorkspace(`Downloading ${plural(requested.length, 'package')} from Thunderstore…`);
     const archives = await desktop.downloadPackages(game.id, refs, context);
-    workspace.recordDownloads(profile.id, game.id, archives, mods.map(mod => mod.id));
-    const roots = new Set(mods.map(mod => mod.id));
+    workspace.recordDownloads(profile.id, game.id, archives, roots);
     workspace.registerPackages(archives.filter(mod => roots.has(mod.id)));
     await finishDownload(context);
-    const text = mods.length === 1 ? mods[0].name : plural(mods.length, 'mod');
-    ui.downloading = false;
-    refreshWorkspace(`Downloaded ${text} for ${profile.name}.`);
+    message = `Downloaded ${label} for ${profile.name}.`;
   } catch (error) {
     await finishDownload(context, error).catch(() => {});
     throw error;
   } finally {
-    if (ui.downloading) {
-      ui.downloading = false;
-      refreshWorkspace();
-    }
+    for (const id of roots) pending.delete(id);
+    if (!pending.size) pendingModDownloads.delete(profile.id);
+    refreshWorkspace(message);
   }
 }
 
@@ -1131,7 +1136,7 @@ function syncModUpdateVisit() {
 function offerProfileUpdates() {
   const visit = modUpdateVisit;
   if (!currentModUpdateVisit(visit) || !visit.promptPending || !startup.hidden || document.hidden ||
-      ui.dialog || dialog.open || ui.downloading || ui.gameBusy || gameIsActive() || ui.clientUpdate?.status === 'installing' || searchComposing) return;
+      ui.dialog || dialog.open || ui.importingProfile || pendingModDownloads.size || ui.gameBusy || gameIsActive() || ui.clientUpdate?.status === 'installing' || searchComposing) return;
   visit.promptPending = false;
   if (manager.updates.length) openDialog('profile-updates', visit);
 }
@@ -1260,7 +1265,7 @@ async function createShareCode() {
 }
 
 function reportClientBusy() {
-  const busy = startup.dataset.ready !== 'true' || Boolean(ui.downloading || ui.gameBusy || (ui.dialog && ui.dialog.type !== 'client-update'));
+  const busy = startup.dataset.ready !== 'true' || Boolean(ui.importingProfile || pendingModDownloads.size || ui.gameBusy || (ui.dialog && ui.dialog.type !== 'client-update'));
   void desktop?.setClientUiBusy?.(busy)?.catch(() => {});
 }
 
@@ -1426,7 +1431,7 @@ async function handleAction(action, id) {
     }
     case 'mod-details': await showDetails(id); break;
     case 'open-downloads': await desktop.openDownloads(); break;
-    case 'clear-completed-downloads': await clearCompletedDownloads(); break;
+    case 'clear-finished-downloads': await clearFinishedDownloads(); break;
     case 'open-package-page': await desktop.openPackagePage(mod.url); break;
     case 'check-updates': await checkUpdates({ manual: true }); break;
     case 'install':
@@ -1695,12 +1700,12 @@ document.addEventListener('submit', async event => {
         const workspace = manager;
         const imported = workspace.readImport(content);
         if (!availableGames.some(game => game.id === imported.gameId)) throw new Error('Choose a profile for a supported game.');
-        ui.downloading = true;
+        ui.importingProfile = true;
         submit.innerHTML = `${icon('clock', 16)} Importing profile…`;
         const progress = form.querySelector('.import-progress');
         const review = form.querySelector('.import-review');
         try {
-          const context = downloadContext(workspace, { ...imported, id: `import-${crypto.randomUUID()}` }, `Import ${imported.name}`);
+          const context = downloadContext({ ...imported, id: `import-${crypto.randomUUID()}` }, `Import ${imported.name}`);
           progress.dataset.downloadId = context.id;
           progress.querySelector('progress').removeAttribute('value');
           progress.querySelector('span').textContent = imported.mods.length ? 'Preparing downloads…' : 'Saving your profile…';
@@ -1720,7 +1725,7 @@ document.addEventListener('submit', async event => {
           delete progress.dataset.downloadId;
           progress.hidden = true;
           review.hidden = !form.importReview;
-          ui.downloading = false;
+          ui.importingProfile = false;
           render();
         }
       } else {

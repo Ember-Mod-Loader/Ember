@@ -6,6 +6,8 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 1024 ** 3;
 const TERMINAL_LIMIT = 50;
 const COMPLETED_RETENTION_MS = 30_000;
+const FAILED_RETENTION_MS = 5 * 60_000;
+const FINISHED_RETENTION_MS = { complete: COMPLETED_RETENTION_MS, failed: FAILED_RETENTION_MS };
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 const ACTIVE = new Set(['resolving', 'downloading', 'saving']);
 const STATES = new Set([...ACTIVE, 'complete', 'failed']);
@@ -90,6 +92,10 @@ function bounded(records) {
   return records.filter(record => ACTIVE.has(record.status) || retained.has(record.id));
 }
 
+function expiresAt(record) {
+  return Date.parse(record.updatedAt) + FINISHED_RETENTION_MS[record.status];
+}
+
 async function createDownloadHistory(filePath, publish = () => {}, {
   now = Date.now, setCleanupTimeout = setTimeout, clearCleanupTimeout = clearTimeout,
 } = {}) {
@@ -128,21 +134,22 @@ async function createDownloadHistory(filePath, publish = () => {}, {
   function scheduleCleanup(retryAfter = 0) {
     clearCleanupTimeout(cleanupTimer);
     cleanupTimer = undefined;
-    const completed = records.filter(record => record.status === 'complete');
-    if (!completed.length) return;
-    const nextExpiry = Math.min(...completed.map(record => Date.parse(record.updatedAt) + COMPLETED_RETENTION_MS));
+    const finished = records.filter(record => !ACTIVE.has(record.status));
+    if (!finished.length) return;
+    const nextExpiry = Math.min(...finished.map(expiresAt));
     cleanupTimer = setCleanupTimeout(() => {
       cleanupTimer = undefined;
-      return removeCompleted(undefined, true).catch(() => {});
+      return removeFinished(undefined, true).catch(() => {});
     }, Math.min(2_147_483_647, Math.max(retryAfter, nextExpiry - now(), 0)));
     cleanupTimer?.unref?.();
   }
 
-  function removeCompleted(gameId, expiredOnly = false) {
+  function removeFinished(gameId, expiredOnly = false) {
     const task = transitions.catch(() => {}).then(async () => {
-      const removed = records.filter(record => record.status === 'complete' &&
+      const time = now();
+      const removed = records.filter(record => !ACTIVE.has(record.status) &&
         (gameId === undefined || record.gameId === gameId) &&
-        (!expiredOnly || Date.parse(record.updatedAt) + COMPLETED_RETENTION_MS <= now()));
+        (!expiredOnly || expiresAt(record) <= time));
       if (!removed.length) { scheduleCleanup(); return []; }
       const ids = new Set(removed.map(record => record.id));
       records = records.filter(record => !ids.has(record.id));
@@ -257,13 +264,13 @@ async function createDownloadHistory(filePath, publish = () => {}, {
     records = bounded(records);
     await save();
   }
-  await removeCompleted(undefined, true).catch(() => {});
+  await removeFinished(undefined, true).catch(() => {});
 
   return {
     list() { return structuredClone(bounded(records)); },
-    clearCompleted(gameId) {
-      if (!GAMES.has(gameId)) throw new Error('Choose a valid game to clear completed downloads.');
-      return removeCompleted(gameId);
+    clearFinished(gameId) {
+      if (!GAMES.has(gameId)) throw new Error('Choose a valid game to clear finished downloads.');
+      return removeFinished(gameId);
     },
     async start(value) {
       const info = context(value);
@@ -339,4 +346,4 @@ async function createDownloadHistory(filePath, publish = () => {}, {
   };
 }
 
-module.exports = { createDownloadHistory, COMPLETED_RETENTION_MS };
+module.exports = { createDownloadHistory, COMPLETED_RETENTION_MS, FAILED_RETENTION_MS };
