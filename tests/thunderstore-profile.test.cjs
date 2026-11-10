@@ -39,6 +39,21 @@ test('unsupported profile-relative text files are reported for review rather tha
   assert.match(result.importWarnings[0], /BepInEx\/plugins\/Team-Plugin\/settings.json/);
 });
 
+test('embedded binaries are verified and skipped while supported settings still import', async () => {
+  const files = [
+    { name: 'BepInEx/plugins/Team-Plugin/Plugin.dll', content: Buffer.from([0x4d, 0x5a, 0x00, 0xff]), deflate: true },
+    { name: 'UserData/tool.exe', content: Buffer.from([0x4d, 0x5a, 0xff]) },
+    { name: 'BepInEx/config/settings.cfg', content: 'Enabled = true' },
+  ];
+  const result = await parseThunderstoreProfile(archive(files), gameId);
+  assert.equal(result.mods.length, 2);
+  assert.deepEqual(result.configFiles, { 'settings.cfg': 'Enabled = true' });
+  assert.deepEqual(result.userDataFiles, {});
+  assert.match(result.importWarnings[0], /Plugin\.dll.*outside/);
+  assert.match(result.importWarnings[1], /tool\.exe.*unsupported settings file type/);
+  await assert.rejects(parseThunderstoreProfile(archive([{ ...files[0], checksum: 0 }]), gameId), /checksum/);
+});
+
 test('Windows profile separators normalize before validation, including traversal and mixed separator collisions', async () => {
   const result = await parseThunderstoreProfile(archive([
     { name: 'config\\', mode: 0o040755 },
@@ -92,9 +107,8 @@ test('MIMESIS native profiles preserve MelonLoader UserData text separately from
   assert.deepEqual(result.importWarnings, []);
 });
 
-test('MelonLoader UserData rejects executables, case collisions, invalid text and aggregate excess', async () => {
+test('MelonLoader UserData rejects case collisions, invalid text and aggregate excess', async () => {
   for (const files of [
-    [{ name: 'UserData/run.dll', content: 'x' }],
     [{ name: 'UserData/settings.cfg', content: 'x\0y' }],
     [{ name: 'UserData/Test.cfg', content: 'x' }, { name: 'userdata/test.cfg', content: 'y' }],
     Array.from({ length: 129 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x' })),
@@ -122,12 +136,11 @@ test('manifest validation rejects duplicate packages, malformed versions, aliase
   }
 });
 
-test('archive paths, links, executables, binary files, duplicate manifests, and checksum corruption are rejected', async () => {
+test('unsafe archive paths, links, binary settings, duplicate manifests, and checksum corruption are rejected', async () => {
   for (const entry of [
     { name: '../escape.cfg', content: 'x' }, { name: '/root.cfg', content: 'x' },
     { name: 'config\\..\\escape.cfg', content: 'x' }, { name: 'config/NUL.txt', content: 'x' },
     { name: 'config/link.cfg', content: 'x', mode: 0o120777 },
-    { name: 'config/executable.dll', content: 'x' }, { name: 'plugin.exe', content: 'x' },
     { name: 'config/binary.cfg', content: Buffer.from([0xff, 0xfe]) },
     { name: 'config/nul.cfg', content: 'x\0y' },
     { name: 'config/broken.cfg', content: 'data', checksum: crc32(Buffer.from('other')) },

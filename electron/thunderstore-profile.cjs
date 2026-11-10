@@ -1,14 +1,13 @@
 const { crc32 } = require('node:zlib');
 const yauzl = require('yauzl');
 const yaml = require('js-yaml');
-const { normalizeConfigFiles, MAX_CONFIG_FILE_BYTES } = require('./config-files.cjs');
+const { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_FILE_BYTES } = require('./config-files.cjs');
 
 const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const MAX_NATIVE_PROFILE_BYTES = Math.ceil(MAX_ARCHIVE_BYTES / 3) * 4 + 128;
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
-const TEXT_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i;
 // Mod lists come from export.r2x; Ember uses the selected loader's configuration.
 const MANAGER_FILE = /^(?:mods\.yml|doorstop_config\.ini)$/i;
 const INVALID_CHARACTER = /[<>:"\\|?*\x00-\x1f\x7f]/;
@@ -102,8 +101,10 @@ async function parseThunderstoreProfile(value, gameId) {
       const isManifest = entry.fileName === 'export.r2x';
       const config = /^(?:BepInEx\/)?config\/(.+)$/i.exec(entry.fileName);
       const userData = /^UserData\/(.+)$/i.exec(entry.fileName);
-      if (!isManifest && !TEXT_EXTENSION.test(entry.fileName)) throw new Error('The profile contains an executable or unsupported file.');
-      const maximum = isManifest ? MAX_MANIFEST_BYTES : config || userData || /^doorstop_config\.ini$/i.test(entry.fileName) ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
+      const inSettings = Boolean(config || userData);
+      const isSettings = inSettings && CONFIG_EXTENSION.test(entry.fileName);
+      const readText = isManifest || isSettings || MANAGER_FILE.test(entry.fileName);
+      const maximum = isManifest ? MAX_MANIFEST_BYTES : isSettings || /^doorstop_config\.ini$/i.test(entry.fileName) ? MAX_CONFIG_FILE_BYTES : MAX_EXPANDED_BYTES;
       if (entry.uncompressedSize > maximum) throw new Error('A profile file exceeds its supported size limit.');
       const stream = await archive.openReadStreamPromise(entry);
       const chunks = [];
@@ -111,9 +112,15 @@ async function parseThunderstoreProfile(value, gameId) {
       for await (const chunk of stream) {
         bytes += chunk.length;
         if (bytes > maximum || bytes > entry.uncompressedSize) { stream.destroy(); throw new Error('A profile file exceeds its supported size limit.'); }
-        checksum = crc32(chunk, checksum); chunks.push(chunk);
+        checksum = crc32(chunk, checksum);
+        if (readText) chunks.push(chunk);
       }
       if (bytes !== entry.uncompressedSize || checksum !== entry.crc32) throw new Error('A profile entry failed its checksum.');
+      if (!readText) {
+        const reason = inSettings ? 'unsupported settings file type' : 'outside the supported settings folders';
+        skipped.push(`${entry.fileName} (${reason})`);
+        continue;
+      }
       const text = decodeText(Buffer.concat(chunks));
       if (isManifest) manifest = parseManifest(text);
       else if (config) {
@@ -122,11 +129,11 @@ async function parseThunderstoreProfile(value, gameId) {
       } else if (userData) {
         if (Object.hasOwn(userDataFiles, userData[1])) throw new Error('The profile contains conflicting configuration paths.');
         userDataFiles[userData[1]] = text;
-      } else if (!MANAGER_FILE.test(entry.fileName)) skipped.push(entry.fileName);
+      }
     }
     if (!manifest) throw new Error('The Thunderstore profile is missing export.r2x.');
-    const warnings = skipped.slice(0, 10).map(name => `Not imported: ${name} (outside BepInEx/config or UserData).`);
-    if (skipped.length > 10) warnings.push(`${skipped.length - 10} more files outside BepInEx/config or UserData were not imported.`);
+    const warnings = skipped.slice(0, 10);
+    if (skipped.length > 10) warnings.push(`${skipped.length - 10} more files from the export will be skipped.`);
     return { ...manifest, gameId, configFiles: normalizeConfigFiles(configFiles),
       userDataFiles: normalizeConfigFiles(userDataFiles), importWarnings: warnings };
   } finally { archive.close(); }

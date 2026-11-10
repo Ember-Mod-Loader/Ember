@@ -159,7 +159,7 @@ function readConfigFiles(value = {}) {
   let bytes = 0;
   for (const [relative, content] of Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
     const parts = relative.split("/");
-    if (!relative.isWellFormed() || relative.length > 512 || parts.length > 16 || !/\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i.test(relative) || parts.some(part =>
+    if (!relative.isWellFormed() || relative.length > 512 || parts.length > 16 || !/\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml|done)$/i.test(relative) || parts.some(part =>
       !part || part.length > 255 || part === "." || part === ".." || /[<>:"\\|?*\x00-\x1f\x7f]/.test(part) ||
       /[. ]$/.test(part) || /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i.test(part.split(".", 1)[0].trimEnd()))) {
       throw new Error("This profile contains an unsupported configuration path.");

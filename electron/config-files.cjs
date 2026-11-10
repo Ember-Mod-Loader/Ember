@@ -1,7 +1,7 @@
 const MAX_CONFIG_FILES = 128;
 const MAX_CONFIG_FILE_BYTES = 256 * 1024;
 const MAX_CONFIG_TOTAL_BYTES = 1024 * 1024;
-const CONFIG_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml)$/i;
+const CONFIG_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml|done)$/i;
 const INVALID_CHARACTER = /[<>:"\\|?*\x00-\x1f\x7f]/;
 const RESERVED_DEVICE = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i;
 
@@ -39,4 +39,4 @@ function normalizeConfigFiles(value = {}) {
   return Object.fromEntries(files);
 }
 
-module.exports = { normalizeConfigFiles, MAX_CONFIG_FILES, MAX_CONFIG_FILE_BYTES, MAX_CONFIG_TOTAL_BYTES };
+module.exports = { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_FILES, MAX_CONFIG_FILE_BYTES, MAX_CONFIG_TOTAL_BYTES };

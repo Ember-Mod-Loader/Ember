@@ -1,8 +1,7 @@
-# Ember 0.6.8
+# Ember 0.6.9
 
-- The Thunderstore import review shows how many mods are ready to install and lists any unavailable mods.
-- Extra files from the profile export appear under a separate expandable section. Ember downloads the original mod packages and imports supported settings.
-- The import dialog shows download progress while it prepares your profile.
+- Thunderstore profile imports preserve text migration markers, including the files LateJoinPlus uses to remember settings migrations.
+- Extra files in a profile export appear in the import review. Ember downloads mods from their original Thunderstore packages and applies supported profile settings.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 
