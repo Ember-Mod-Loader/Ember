@@ -3,7 +3,8 @@ const test = require('node:test');
 const yaml = require('js-yaml');
 const { crc32 } = require('node:zlib');
 const { zipFixture } = require('./zip-fixture.cjs');
-const { parseThunderstoreProfile, MAX_ARCHIVE_BYTES } = require('../electron/thunderstore-profile.cjs');
+const { parseThunderstoreProfile, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES } = require('../electron/thunderstore-profile.cjs');
+const { MAX_CONFIG_FILES, MAX_CONFIG_TOTAL_BYTES, MAX_PROFILE_MODS } = require('../electron/profile-limits.json');
 
 const gameId = 'lethal-company';
 const manifest = { profileName: 'Café friends', mods: [
@@ -111,8 +112,8 @@ test('MelonLoader UserData rejects case collisions, invalid text and aggregate e
   for (const files of [
     [{ name: 'UserData/settings.cfg', content: 'x\0y' }],
     [{ name: 'UserData/Test.cfg', content: 'x' }, { name: 'userdata/test.cfg', content: 'y' }],
-    Array.from({ length: 129 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x' })),
-    Array.from({ length: 5 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x'.repeat(250 * 1024), deflate: true })),
+    Array.from({ length: MAX_CONFIG_FILES + 1 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x' })),
+    Array.from({ length: 3 }, (_, i) => ({ name: `UserData/${i}.cfg`, content: 'x'.repeat(MAX_CONFIG_TOTAL_BYTES / 2), deflate: true })),
   ]) await assert.rejects(() => parseThunderstoreProfile(archive(files), 'mimesis'));
 });
 
@@ -129,7 +130,7 @@ test('manifest validation rejects duplicate packages, malformed versions, aliase
     { ...manifest, mods: [{ name: 'Team-Plugin', version: { major: '1', minor: 0, patch: 0 } }] },
     { ...manifest, mods: [{ name: 'Team-Plugin', version: { major: 1, minor: 0, patch: 0 }, enabled: 'false' }] },
     { ...manifest, profileName: 'x'.repeat(61) },
-    { ...manifest, mods: Array(201).fill(manifest.mods[0]) },
+    { ...manifest, mods: Array(MAX_PROFILE_MODS + 1).fill(manifest.mods[0]) },
   ]) await assert.rejects(() => parseThunderstoreProfile(archive([], value), gameId));
   for (const text of ['profileName: &name Test\nmods: []\nother: *name', 'profileName: Test\nmods: []\n---\nprofileName: Other']) {
     await assert.rejects(() => parseThunderstoreProfile(encode(zipFixture([{ name: 'export.r2x', content: text }])), gameId), /manifest is invalid/);
@@ -155,11 +156,12 @@ test('unsafe archive paths, links, binary settings, duplicate manifests, and che
 });
 
 test('entry, expanded, manifest, and aggregate configuration limits prevent resource exhaustion', async () => {
-  await assert.rejects(() => parseThunderstoreProfile(archive([], manifest, { declaredEntryCount: 513 }), gameId), /512/);
+  await assert.rejects(() => parseThunderstoreProfile(archive([], manifest, { declaredEntryCount: MAX_ARCHIVE_ENTRIES + 1 }), gameId), /10,000/);
   await assert.rejects(() => parseThunderstoreProfile(archive([{ name: 'config/huge.cfg', content: 'x', expandedSize: 17 * 1024 * 1024 }]), gameId));
   await assert.rejects(() => parseThunderstoreProfile(encode(zipFixture([{ name: 'export.r2x', content: 'x'.repeat(256 * 1024 + 1) }])), gameId), /size/);
-  await assert.rejects(() => parseThunderstoreProfile(archive([{ name: 'config/large.cfg', content: 'x'.repeat(1024 * 1024 + 1), deflate: true }]), gameId),
-    /config\/large\.cfg exceeds the 1 MB/);
-  await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: 129 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x' }))), gameId), /128/);
-  await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: 5 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x'.repeat(250 * 1024), deflate: true }))), gameId), /1 MB/);
+  await assert.rejects(() => parseThunderstoreProfile(archive([{ name: 'config/large.cfg', content: 'x'.repeat(MAX_CONFIG_TOTAL_BYTES + 1), deflate: true }]), gameId),
+    /config\/large\.cfg exceeds the 2 MiB/);
+  await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: MAX_CONFIG_FILES + 1 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x' }))), gameId),
+    new RegExp(`up to ${MAX_CONFIG_FILES}`));
+  await assert.rejects(() => parseThunderstoreProfile(archive(Array.from({ length: 3 }, (_, i) => ({ name: `config/${i}.cfg`, content: 'x'.repeat(MAX_CONFIG_TOTAL_BYTES / 2), deflate: true }))), gameId), /2 MiB/);
 });

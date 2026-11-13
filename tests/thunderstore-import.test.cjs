@@ -17,8 +17,8 @@ const disabled = { namespace: 'Test-team', name: 'Disabled', version: '2.3.4' };
 const runtime = { namespace: 'Test-team', name: 'Runtime', version: '2.0.0' };
 const offRuntime = { namespace: 'Test-team', name: 'OffRuntime', version: '1.0.0' };
 
-function archive(extra = []) {
-  const mods = [loader, enabled, disabled].map(ref => {
+function archive(extra = [], refs = [loader, enabled, disabled]) {
+  const mods = refs.map(ref => {
     const [major, minor, patch] = ref.version.split('.').map(Number);
     return { name: `${ref.namespace}-${ref.name}`, version: { major, minor, patch }, enabled: ref !== disabled };
   });
@@ -75,6 +75,38 @@ async function importProfile(client, manager) {
   assert.deepEqual(JSON.parse(json).importWarnings, [], 'Manager-owned Doorstop configuration must not cause an unsupported-file review.');
   return manager.importProfile(json, parsed.mods.map(entry => entry.package));
 }
+
+test('a large Thunderstore export preserves mods and settings through import, reload and share', async () => {
+  const { createManager } = await import('../src/model.js');
+  const refs = Array.from({ length: 331 }, (_, index) => ({ namespace: 'Team', name: `Plugin${index}`, version: '1.2.3' }));
+  const config = 'Setting = value\n'.repeat(300);
+  const files = Array.from({ length: 282 }, (_, index) => ({ name: `config/Plugin${index}.cfg`, content: config, deflate: true }));
+  const extras = Array.from({ length: 764 }, (_, index) => ({ name: `config/backup${index}.bak`, content: 'backup' }));
+  const payload = archive([...files, ...extras], refs);
+  let shared;
+  const client = createSharingClient({
+    fetchImpl: async (_url, options) => {
+      if (options.method !== 'POST') return new Response(shared ?? payload);
+      shared = options.body;
+      return Response.json({ key: code });
+    },
+    resolvePackage: (_game, ref) => packageFor(ref),
+  });
+  const saved = storage();
+  const manager = createManager(saved, { live: true });
+  const json = await client.resolveThunderstoreProfile(code, gameId);
+  const expected = manager.readImport(json);
+  assert.equal(expected.mods.length, refs.length);
+  assert.equal(Object.keys(expected.configFiles).length, files.length + 1);
+  assert.match(JSON.parse(json).importWarnings.at(-1), /more files from the export/);
+  manager.importProfile(json, expected.mods.map(mod => mod.package));
+  const reloaded = createManager(saved, { live: true });
+  assert.deepEqual(reloaded.profile.configFiles, expected.configFiles);
+  assert.equal(await client.publishProfile(reloaded.exportProfile().json, 'thunderstore'), code);
+  const roundTrip = manager.readImport(await client.resolveThunderstoreProfile(code, gameId));
+  assert.deepEqual(roundTrip.mods, expected.mods);
+  assert.deepEqual(roundTrip.configFiles, expected.configFiles);
+});
 
 test('a native shared profile keeps exact versions, disabled mods, large settings and migration markers', async t => {
   const f = await fixture(t);

@@ -1,7 +1,7 @@
-# Ember 0.6.14
+# Ember 0.6.15
 
-- Thunderstore profile imports now keep larger mod configuration files, including CodeRebirth settings, within the existing 1 MB limit for each settings folder.
-- Size errors for individual files now identify the file and its limit.
+- Larger Thunderstore profiles can be imported, downloaded, prepared for launch, and shared from Ember.
+- Profile ZIPs can contain up to 10,000 entries and list up to 1,000 mods, including dependencies. Each settings folder supports up to 1,024 files and 2 MiB of settings.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

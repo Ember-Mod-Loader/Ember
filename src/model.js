@@ -1,5 +1,6 @@
 import { GAMES, getCatalog, getGame, getPackage } from "./catalog.js";
 import { REWARD_WALLPAPERS, readRewardCode, readUnlockedRewards } from "./rewards.js";
+import limits from "../electron/profile-limits.json" with { type: "json" };
 
 const STORAGE_KEY = "modrelay:workspace:v1";
 const LIVE_STORAGE_KEY = "modrelay:thunderstore:v1";
@@ -151,8 +152,8 @@ function readPackage(value, gameId, allowPreview = false) {
 }
 
 function readConfigFiles(value = {}) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 128) {
-    throw new Error("Choose up to 128 configuration files.");
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > limits.MAX_CONFIG_FILES) {
+    throw new Error(`Choose up to ${limits.MAX_CONFIG_FILES} configuration files.`);
   }
   const paths = new Map();
   const files = [];
@@ -180,7 +181,7 @@ function readConfigFiles(value = {}) {
       throw new Error("Configuration files must be valid UTF-8 text.");
     }
     bytes += encoder.encode(content).byteLength;
-    if (bytes > 1024 * 1024) throw new Error("Profile configuration files exceed 1 MB.");
+    if (bytes > limits.MAX_CONFIG_TOTAL_BYTES) throw new Error("Profile configuration files exceed 2 MiB.");
     files.push([relative, content]);
   }
   return Object.fromEntries(files);

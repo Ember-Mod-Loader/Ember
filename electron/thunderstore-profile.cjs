@@ -4,12 +4,13 @@ const yauzl = require('yauzl');
 const { ZipFile } = require('yazl');
 const yaml = require('js-yaml');
 const { normalizeConfigFiles, CONFIG_EXTENSION, MAX_CONFIG_TOTAL_BYTES } = require('./config-files.cjs');
+const { MAX_PROFILE_MODS } = require('./profile-limits.json');
 
 const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const MAX_NATIVE_PROFILE_BYTES = Math.ceil(MAX_ARCHIVE_BYTES / 3) * 4 + 128;
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_PROFILE_METADATA_BYTES = 256 * 1024;
-const MAX_PROFILE_MODS = 200;
+const MAX_ARCHIVE_ENTRIES = 10000;
 const PROFILE_MARKER = '#r2modman';
 const GAMES = new Set(['lethal-company', 'repo', 'peak', 'mimesis']);
 // Mod lists come from export.r2x; Ember uses the selected loader's configuration.
@@ -51,7 +52,7 @@ function parseManifest(text) {
   } catch { throw new Error('The Thunderstore profile manifest is invalid.'); }
   if (!value || typeof value.profileName !== 'string' || !value.profileName.trim() ||
       value.profileName.trim().length > 60 || !Array.isArray(value.mods) || value.mods.length > MAX_PROFILE_MODS) {
-    throw new Error('Choose a Thunderstore profile with a name up to 60 characters and up to 200 mods.');
+    throw new Error(`Choose a Thunderstore profile with a name up to 60 characters and up to ${MAX_PROFILE_MODS} mods.`);
   }
   const seen = new Set();
   const mods = value.mods.map(mod => {
@@ -70,7 +71,7 @@ function parseManifest(text) {
 
 async function encodeThunderstoreProfile(profile) {
   if (!profile.mods.length || profile.mods.length > MAX_PROFILE_MODS) {
-    throw new Error('Choose a profile with 1 to 200 mods to create a Thunderstore code.');
+    throw new Error(`Choose a profile with 1 to ${MAX_PROFILE_MODS} mods to create a Thunderstore code.`);
   }
   const seen = new Set();
   const mods = profile.mods.map(entry => {
@@ -134,7 +135,7 @@ async function parseThunderstoreProfile(value, gameId) {
   const registry = new Map();
   let expanded = 0;
   try {
-    if (archive.entryCount > 512) throw new Error('The profile exceeds the 512-file limit.');
+    if (archive.entryCount > MAX_ARCHIVE_ENTRIES) throw new Error('The profile archive contains more than 10,000 files and folders.');
     for await (const entry of archive.eachEntry()) {
       const directory = entry.fileName.endsWith('/');
       validatePath(entry.fileName, registry, directory);
@@ -153,7 +154,7 @@ async function parseThunderstoreProfile(value, gameId) {
       const isSettings = inSettings && CONFIG_EXTENSION.test(entry.fileName);
       const readText = isManifest || isSettings || MANAGER_FILE.test(entry.fileName);
       if (isSettings && entry.uncompressedSize > MAX_CONFIG_TOTAL_BYTES) {
-        throw new Error(`${entry.fileName} exceeds the 1 MB configuration size limit.`);
+        throw new Error(`${entry.fileName} exceeds the 2 MiB configuration size limit.`);
       }
       if ((isManifest || /^doorstop_config\.ini$/i.test(entry.fileName)) && entry.uncompressedSize > MAX_PROFILE_METADATA_BYTES) {
         throw new Error(`${entry.fileName} exceeds the 256 KB size limit for profile metadata.`);
@@ -191,4 +192,4 @@ async function parseThunderstoreProfile(value, gameId) {
   } finally { archive.close(); }
 }
 
-module.exports = { encodeThunderstoreProfile, parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES, MAX_ARCHIVE_BYTES };
+module.exports = { encodeThunderstoreProfile, parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES };

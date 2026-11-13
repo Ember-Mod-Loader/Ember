@@ -16,6 +16,7 @@ const { createPresence } = require('./presence.cjs');
 const { acquirePresenceLease } = require('./presence-lease.cjs');
 const { createQuitCoordinator } = require('./quit-coordinator.cjs');
 const { createDiagnostics, errorDetails } = require('./diagnostics.cjs');
+const { MAX_PROFILE_MODS } = require('./profile-limits.json');
 const { emberPresence } = require('../package.json');
 const { assertSupportedGamesClosed } = require('./steam.cjs');
 
@@ -133,14 +134,16 @@ function handle(channel, action) {
 }
 
 async function downloadPackages(cache, gameId, roots, history, operationId, thunderstoreProfile) {
-  if (!Array.isArray(roots) || roots.length > 200) throw new Error('Choose up to 200 Thunderstore packages.');
+  if (!Array.isArray(roots) || roots.length > MAX_PROFILE_MODS) {
+    throw new Error(`Choose up to ${MAX_PROFILE_MODS} Thunderstore packages.`);
+  }
   const packages = new Map();
 
   async function resolve(ref) {
     if (typeof ref?.namespace !== 'string' || typeof ref.name !== 'string') throw new Error('Invalid Thunderstore package.');
     const key = `${ref.namespace}/${ref.name}@${ref.version}`;
     if (packages.has(key)) return;
-    if (packages.size >= 200) throw new Error('This download includes more than 200 package versions.');
+    if (packages.size >= MAX_PROFILE_MODS) throw new Error(`This download includes more than ${MAX_PROFILE_MODS} package versions.`);
     const { namespace, name, version } = ref;
     const mod = thunderstoreProfile
       ? await fetchProfilePackageVersion(gameId, namespace, name, version, { allowUnlisted: ref.unlisted === true })

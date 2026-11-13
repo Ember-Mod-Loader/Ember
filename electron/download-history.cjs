@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { mkdir, readFile, rename, rm, stat, writeFile } = require('node:fs/promises');
 const path = require('node:path');
+const { MAX_PROFILE_MODS } = require('./profile-limits.json');
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 1024 ** 3;
@@ -66,7 +67,7 @@ function errorText(error) {
 function readRecord(value) {
   const record = context(value);
   if (!STATES.has(value.status) || !Number.isFinite(Date.parse(value.createdAt)) ||
-      !Number.isFinite(Date.parse(value.updatedAt)) || !Array.isArray(value.packages) || value.packages.length > 200) {
+      !Number.isFinite(Date.parse(value.updatedAt)) || !Array.isArray(value.packages) || value.packages.length > MAX_PROFILE_MODS) {
     throw new Error('Invalid download history.');
   }
   const keys = new Set();
@@ -284,7 +285,7 @@ async function createDownloadHistory(filePath, publish = () => {}, {
     plan(id, mods) {
       const previous = find(id);
       if (!ACTIVE.has(previous.status) || previous.status === 'saving') return;
-      if (!Array.isArray(mods) || mods.length > 200) throw new Error('Choose up to 200 package versions.');
+      if (!Array.isArray(mods) || mods.length > MAX_PROFILE_MODS) throw new Error(`Choose up to ${MAX_PROFILE_MODS} package versions.`);
       const existing = new Map(previous.packages.map(item => [item.key, item]));
       const packages = new Map();
       for (const mod of mods) {

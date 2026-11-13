@@ -644,7 +644,7 @@ test("invalid imported configuration files cannot create a partial profile", () 
   const original = workspace.profiles.length;
   for (const configFiles of [null, [], { "../escape.cfg": "unsafe" }, { "run.dll": "executable" },
     { "NUL.cfg": "reserved" }, { "file.cfg": "binary\0text" }, { "Case.cfg": "a", "case.cfg": "b" },
-    { "dir/file.cfg": "a", "DIR/other.cfg": "b" }, { "file.cfg": "é".repeat(512 * 1024 + 1) }]) {
+    { "dir/file.cfg": "a", "DIR/other.cfg": "b" }, { "file.cfg": "é".repeat(1024 * 1024 + 1) }]) {
     assert.throws(() => workspace.importProfile(JSON.stringify({ ...payload, configFiles })), /configuration|Configuration/);
     assert.equal(workspace.profiles.length, original);
   }

@@ -112,7 +112,7 @@ test('invalid Thunderstore share snapshots are rejected before upload', async ()
   const snapshot = JSON.parse(profile);
   const [entry] = snapshot.mods;
   for (const [changes, error] of [
-    [{ mods: [] }, /1 to 200 mods/],
+    [{ mods: [] }, /1 to 1000 mods/],
     [{ mods: [entry, entry] }, /duplicate mods/],
     [{ mods: [{ ...entry, version: 'latest' }] }, /mod or version/],
     [{ configFiles: { '../settings.cfg': 'Value = true' } }, /unsupported configuration path/],
@@ -468,7 +468,10 @@ test('Thunderstore import limits parallel package resolution and rejects oversiz
   } });
   await client.resolveThunderstoreProfile(key, 'repo');
   assert.equal(maximum, 3);
-  const tooLarge = createSharingClient({ fetchImpl: async () => new Response(nativePayload([nativeMod('Team-Root')])),
-    resolvePackage: async (gameId, ref) => packageFor(gameId, ref, Array.from({ length: 200 }, (_, index) => ({ namespace: 'Team', name: `Dependency${index}`, version: '1.0.0' }))) });
-  await assert.rejects(() => tooLarge.resolveThunderstoreProfile(key, 'repo'), /exceed 200/);
+  const roots = Array.from({ length: 4 }, (_, index) => nativeMod(`Team-Root${index}`));
+  const tooLarge = createSharingClient({ fetchImpl: async () => new Response(nativePayload(roots)),
+    resolvePackage: async (gameId, ref) => packageFor(gameId, ref, ref.name.startsWith('Root')
+      ? Array.from({ length: 250 }, (_, index) => ({ namespace: 'Team', name: `${ref.name}Dependency${index}`, version: '1.0.0' }))
+      : []) });
+  await assert.rejects(() => tooLarge.resolveThunderstoreProfile(key, 'repo'), /exceed 1000/);
 });

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { normalizeConfigFiles } = require('../electron/config-files.cjs');
+const { normalizeConfigFiles, MAX_CONFIG_FILES, MAX_CONFIG_TOTAL_BYTES } = require('../electron/config-files.cjs');
 
 test('configuration templates preserve text and deterministic paths without mutating input', () => {
   const input = { 'sub/crew.json': '{"name":"café ☕"}\n', 'BepInEx.cfg': '[Logging]\nEnabled = true\r\n' };
@@ -27,11 +27,12 @@ test('configuration templates reject unsafe paths, executables, binary text, and
 });
 
 test('configuration limits bound file counts and aggregate UTF-8 bytes', () => {
-  assert.throws(() => normalizeConfigFiles(Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`file${i}.cfg`, '']))), /128/);
-  const chunk = 'é'.repeat(128 * 1024);
-  assert.equal(Object.keys(normalizeConfigFiles({ 'a.cfg': chunk, 'b.cfg': chunk, 'c.cfg': chunk, 'd.cfg': chunk })).length, 4);
-  assert.throws(() => normalizeConfigFiles({ 'a.cfg': chunk, 'b.cfg': chunk, 'c.cfg': chunk, 'd.cfg': chunk, 'e.cfg': 'x' }), /exceed 1 MB/);
-  const large = chunk.repeat(4);
+  assert.throws(() => normalizeConfigFiles(Object.fromEntries(Array.from({ length: MAX_CONFIG_FILES + 1 }, (_, i) => [`file${i}.cfg`, '']))),
+    new RegExp(`up to ${MAX_CONFIG_FILES}`));
+  const half = 'é'.repeat(MAX_CONFIG_TOTAL_BYTES / 4);
+  assert.equal(Object.keys(normalizeConfigFiles({ 'a.cfg': half, 'b.cfg': half })).length, 2);
+  assert.throws(() => normalizeConfigFiles({ 'a.cfg': half, 'b.cfg': half, 'c.cfg': 'x' }), /exceed 2 MiB/);
+  const large = half.repeat(2);
   assert.deepEqual(normalizeConfigFiles({ 'large.cfg': large }), { 'large.cfg': large });
-  assert.throws(() => normalizeConfigFiles({ 'large.cfg': large + 'é' }), /exceed 1 MB/);
+  assert.throws(() => normalizeConfigFiles({ 'large.cfg': large + 'é' }), /exceed 2 MiB/);
 });

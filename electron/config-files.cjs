@@ -1,12 +1,11 @@
-const MAX_CONFIG_FILES = 128;
-const MAX_CONFIG_TOTAL_BYTES = 1024 * 1024;
+const { MAX_CONFIG_FILES, MAX_CONFIG_TOTAL_BYTES } = require('./profile-limits.json');
 const CONFIG_EXTENSION = /\.(?:cfg|json|txt|ya?ml|xml|ini|conf|toml|done)$/i;
 const INVALID_CHARACTER = /[<>:"\\|?*\x00-\x1f\x7f]/;
 const RESERVED_DEVICE = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i;
 
 function normalizeConfigFiles(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).length > MAX_CONFIG_FILES) throw new Error('Choose up to 128 configuration files.');
+      Object.keys(value).length > MAX_CONFIG_FILES) throw new Error(`Choose up to ${MAX_CONFIG_FILES} configuration files.`);
   const paths = new Map();
   const files = [];
   let bytes = 0;
@@ -32,7 +31,7 @@ function normalizeConfigFiles(value = {}) {
       throw new Error('Configuration files must be valid UTF-8 text.');
     }
     bytes += Buffer.byteLength(content, 'utf8');
-    if (bytes > MAX_CONFIG_TOTAL_BYTES) throw new Error('Profile configuration files exceed 1 MB.');
+    if (bytes > MAX_CONFIG_TOTAL_BYTES) throw new Error('Profile configuration files exceed 2 MiB.');
     files.push([relative, content]);
   }
   return Object.fromEntries(files);

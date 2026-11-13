@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const { MAX_PROFILE_MODS } = require('./profile-limits.json');
 const { encodeThunderstoreProfile, parseThunderstoreProfile, MAX_NATIVE_PROFILE_BYTES } = require('./thunderstore-profile.cjs');
 const { fetchProfilePackageVersion, ThunderstorePackageUnavailableError } = require('./thunderstore.cjs');
 
@@ -191,7 +192,7 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
     function resolveVersion(ref) {
       const key = versionKey(ref);
       if (versions.has(key)) return versions.get(key);
-      if (versions.size >= 1000) throw new Error('The profile has too many dependency version changes.');
+      if (versions.size >= 3 * MAX_PROFILE_MODS) throw new Error('The profile has too many dependency version changes.');
       const result = (async () => {
         let mod;
         try {
@@ -234,7 +235,7 @@ function createSharingClient({ fetchImpl = globalThis.fetch, resolvePackage = (g
             const key = packageKey(dependency);
             const existing = entries.get(key);
             if (!existing) {
-              if (entries.size >= 200) throw new Error('The profile and its dependencies exceed 200 mods.');
+              if (entries.size >= MAX_PROFILE_MODS) throw new Error(`The profile and its dependencies exceed ${MAX_PROFILE_MODS} mods.`);
               entries.set(key, { namespace: dependency.namespace, name: dependency.name, version: dependency.version, enabled: false, explicit: false, mod: null, unavailable: null });
             } else if (!existing.explicit && newer(dependency.version, existing.version)) {
               existing.version = dependency.version;

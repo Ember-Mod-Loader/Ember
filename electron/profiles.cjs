@@ -4,6 +4,7 @@ const { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFil
 const path = require('node:path');
 const { extractArchive } = require('./archive.cjs');
 const { normalizeConfigFiles } = require('./config-files.cjs');
+const { MAX_PROFILE_MODS } = require('./profile-limits.json');
 const { chooseLoader } = require('./loaders.cjs');
 const { createPackageMapper } = require('./package-layout.cjs');
 
@@ -61,7 +62,9 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     const base = profileDirectory(root, id, gameId);
     const configFiles = normalizeConfigFiles(importedConfigFiles);
     const userDataFiles = normalizeConfigFiles(importedUserDataFiles);
-    if (!Array.isArray(entries) || entries.length > 200) throw new Error('Choose up to 200 enabled packages for this profile.');
+    if (!Array.isArray(entries) || entries.length > MAX_PROFILE_MODS) {
+      throw new Error(`Choose up to ${MAX_PROFILE_MODS} enabled packages for this profile.`);
+    }
     const refs = entries.map(entry => {
       if (typeof entry?.namespace !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(entry.namespace) ||
           typeof entry.name !== 'string' || !/^[a-z0-9_]{1,128}$/i.test(entry.name) ||

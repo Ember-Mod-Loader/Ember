@@ -108,6 +108,29 @@ test('cached package progress and imported profile identity are recorded durably
   assert.equal(record.status, 'complete');
 });
 
+test('large profile download plans survive a restart with all package progress', async t => {
+  const root = await temporaryDirectory(t);
+  const file = path.join(root, 'history.json');
+  const history = await createDownloadHistory(file);
+  const id = await history.start(operation());
+  const packages = Array.from({ length: 331 }, (_, index) => ({
+    ...mod,
+    name: `Plugin${index}`,
+    id: `lethal-company/${mod.namespace}/Plugin${index}`,
+  }));
+  history.plan(id, packages);
+  for (const pkg of packages) {
+    history.progress(id, `${pkg.id}@${pkg.version}`, { status: 'complete', received: 80, total: 80, cached: true });
+  }
+  await history.ready(id);
+  await history.complete(id);
+
+  const [reloaded] = (await createDownloadHistory(file)).list();
+  assert.equal(reloaded.status, 'complete');
+  assert.deepEqual(reloaded.packages.map(pkg => pkg.id), packages.map(pkg => pkg.id));
+  assert(reloaded.packages.every(pkg => pkg.received === 80 && pkg.cached));
+});
+
 test('restart marks interrupted work failed and retains completed history', async t => {
   const root = await temporaryDirectory(t);
   const file = path.join(root, 'history.json');
