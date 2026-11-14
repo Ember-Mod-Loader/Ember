@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdir, readdir, readFile, writeFile } = require('node:fs/promises');
+const { mkdir, readdir, readFile, rename, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const { createProfileBuilder } = require('../electron/profiles.cjs');
@@ -11,7 +11,7 @@ const profileId = 'lethal-company-default';
 const loader = { namespace: 'BepInEx', name: 'BepInExPack', version: '5.4.2305' };
 const plugin = { namespace: 'Test-team', name: 'Plugin', version: '1.0.0' };
 
-async function fixture(t, { gameId = game, root: sharedRoot, loaderKind = 'bepinex' } = {}) {
+async function fixture(t, { gameId = game, root: sharedRoot, loaderKind = 'bepinex', renamePath } = {}) {
   const root = sharedRoot ?? await temporaryDirectory(t);
   const cache = { root: path.join(root, 'cache') };
   const gameCache = path.join(cache.root, gameId);
@@ -52,8 +52,10 @@ async function fixture(t, { gameId = game, root: sharedRoot, loaderKind = 'bepin
     { name: 'config/example.cfg', content: 'bundled defaults' },
     { name: 'README.md', content: 'package metadata' },
   ]);
+  const createBuilder = () => createProfileBuilder(path.join(root, 'profiles'), cache, { gameId, renamePath, retryDelay: async () => {} });
   return {
-    builder: createProfileBuilder(path.join(root, 'profiles'), cache, { gameId }),
+    builder: createBuilder(),
+    createBuilder,
     loader: selectedLoader,
     addPackage,
     requests,
@@ -80,6 +82,76 @@ test('profile staging isolates plugins, reuses prepared runtimes, and keeps conf
   assert.equal(await builder.prepareProfile(profileId, [loader]), runtime);
   assert.equal(await readFile(config, 'utf8'), 'user edited');
   await assert.rejects(() => readdir(path.join(runtime, 'BepInEx', 'plugins')), { code: 'ENOENT' });
+});
+
+test('a transient Windows runtime lock is retried before replacing the canonical folder', async t => {
+  let lockedRenameAttempts = 0;
+  const f = await fixture(t, { renamePath: async (source, target) => {
+    if (path.basename(target).startsWith('backup-') && ++lockedRenameAttempts === 1) {
+      throw Object.assign(new Error('Windows sharing violation'), { code: 'EPERM' });
+    }
+    await rename(source, target);
+  } });
+  const runtime = await f.builder.prepareProfile(profileId, [loader, plugin]);
+  assert.equal(await f.builder.prepareProfile(profileId, [loader]), runtime);
+  assert.equal(lockedRenameAttempts, 2);
+  assert.deepEqual(await readdir(path.dirname(runtime)), ['runtime']);
+});
+
+test('a locked runtime is replaced without moving it and the new selection persists across restarts', async t => {
+  let original, locked = true;
+  const f = await fixture(t, { renamePath: async (source, target) => {
+    if (locked && source === original) throw Object.assign(new Error('Windows sharing violation'), { code: 'EPERM' });
+    await rename(source, target);
+  } });
+  original = await f.builder.prepareProfile(profileId, [loader, plugin]);
+  await writeFile(path.join(original, 'BepInEx/config/example.cfg'), 'user edit');
+  const replacement = await f.builder.prepareProfile(profileId, [loader]);
+  assert.notEqual(replacement, original);
+  assert.equal(await f.builder.openProfilePath(profileId), replacement);
+  assert.equal(await readFile(path.join(replacement, 'BepInEx/config/example.cfg'), 'utf8'), 'user edit');
+  assert.equal(await readFile(path.join(original, 'BepInEx/config/example.cfg'), 'utf8'), 'user edit');
+  await assert.rejects(() => readdir(path.join(replacement, 'BepInEx/plugins')), { code: 'ENOENT' });
+  const restarted = f.createBuilder();
+  assert.equal(await restarted.openProfilePath(profileId), replacement);
+  assert.equal(await restarted.prepareProfile(profileId, [loader]), replacement);
+  const originalPlugins = await readdir(path.join(original, 'BepInEx/plugins'), { recursive: true });
+  assert(originalPlugins.some(file => path.basename(file) === 'Example.dll'));
+
+  locked = false;
+  await writeFile(path.join(replacement, 'BepInEx/config/example.cfg'), 'updated on replacement');
+  const rebuilt = await restarted.prepareProfile(profileId, [loader, plugin]);
+  assert.notEqual(rebuilt, replacement);
+  assert.equal(await readFile(path.join(rebuilt, 'BepInEx/config/example.cfg'), 'utf8'), 'updated on replacement');
+  assert.deepEqual((await readdir(path.dirname(rebuilt))).sort(), ['.ember-runtime', path.basename(rebuilt)]);
+});
+
+test('failed runtime selection preserves the previous profile and allows a clean retry', async t => {
+  let original, denySelection = true;
+  const f = await fixture(t, { renamePath: async (source, target) => {
+    if (source === original || (denySelection && path.basename(target) === '.ember-runtime')) {
+      throw Object.assign(new Error('Windows sharing violation'), { code: 'EPERM' });
+    }
+    await rename(source, target);
+  } });
+  original = await f.builder.prepareProfile(profileId, [loader, plugin]);
+  const config = path.join(original, 'BepInEx/config/example.cfg');
+  await writeFile(config, 'previous profile');
+  await assert.rejects(() => f.builder.prepareProfile(profileId, [loader]), /Windows is blocking access to this profile/);
+  assert.equal(await f.createBuilder().openProfilePath(profileId), original);
+  assert.equal(await readFile(config, 'utf8'), 'previous profile');
+  assert.deepEqual(await readdir(path.dirname(original)), ['runtime']);
+  denySelection = false;
+  assert.notEqual(await f.builder.prepareProfile(profileId, [loader]), original);
+});
+
+test('a malformed runtime selection cannot make Ember open or replace another folder', async t => {
+  const { builder } = await fixture(t);
+  const runtime = await builder.prepareProfile(profileId, [loader]);
+  await writeFile(path.join(path.dirname(runtime), '.ember-runtime'), '../runtime-0000000000000');
+  await assert.rejects(() => builder.openProfilePath(profileId), /could not read the active profile folder/);
+  await assert.rejects(() => builder.prepareProfile(profileId, [loader, plugin]), /could not read the active profile folder/);
+  assert.equal(await readFile(path.join(runtime, 'winhttp.dll'), 'utf8'), 'doorstop');
 });
 
 test('invalid or conflicting archives leave the prior prepared runtime intact', async t => {

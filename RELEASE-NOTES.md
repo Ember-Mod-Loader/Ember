@@ -1,7 +1,6 @@
-# Ember 0.6.15
+# Ember 0.6.16
 
-- Larger Thunderstore profiles can be imported, downloaded, prepared for launch, and shared from Ember.
-- Profile ZIPs can contain up to 10,000 entries and list up to 1,000 mods, including dependencies. Each settings folder supports up to 1,024 files and 2 MiB of settings.
+- Ember can prepare and launch an updated modded profile when Windows still has a file open in its previous runtime. Ember carries over the profile's settings and uses the newly prepared files.
 
 Installed clients receive this update through **Settings → Update client** or the automatic startup check. Existing profiles and preferences are preserved.
 

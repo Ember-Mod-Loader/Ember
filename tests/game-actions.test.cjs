@@ -1,8 +1,9 @@
 const assert = require('node:assert/strict');
-const { mkdir, readFile, writeFile } = require('node:fs/promises');
+const { mkdir, readFile, rename, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const { registerGameActions } = require('../electron/game-actions.cjs');
+const { createProfileBuilder } = require('../electron/profiles.cjs');
 const { createDownloadHistory } = require('../electron/download-history.cjs');
 const { temporaryDirectory } = require('./temp-directory.cjs');
 const { zipFixture } = require('./zip-fixture.cjs');
@@ -33,7 +34,7 @@ test('imported configuration reaches preparation, setup, and modded launch for e
   }
 });
 
-async function fixture(t) {
+async function fixture(t, createProfiles) {
   const directory = await temporaryDirectory(t);
   const events = [];
   const history = await createDownloadHistory(path.join(directory, 'downloads.json'), event => events.push(event));
@@ -91,7 +92,7 @@ async function fixture(t) {
   let selection;
   const window = {};
   const actions = registerGameActions({
-    directory, cache, history, now: () => clock,
+    directory, cache, history, createProfiles, now: () => clock,
     handle: (name, callback) => handlers.set(name, callback),
     getWindow: () => window,
     dialog: { showOpenDialog: async (actualWindow, options) => {
@@ -259,6 +260,38 @@ test('setup and removal route to the selected game with the real prepared runtim
       gameId, method: 'remove', input: f.statuses.get(gameId).gameDir,
     });
   }
+});
+
+test('loader setup, modded launch, and opening the profile use the replacement for a locked runtime', async t => {
+  const gameId = 'lethal-company';
+  const profileId = `${gameId}-default`;
+  let lockedRuntime;
+  const f = await fixture(t, (root, cache, options) => createProfileBuilder(root, cache, {
+    ...options,
+    retryDelay: async () => {},
+    renamePath: async (source, target) => {
+      if (source === lockedRuntime) throw Object.assign(new Error('Windows sharing violation'), { code: 'EPERM' });
+      await rename(source, target);
+    },
+  }));
+  const loader = loaderFor(gameId);
+  await f.invoke('prepare-profile', profileId, [loader], 'Default', gameId);
+  lockedRuntime = path.join(f.directory, 'profiles', gameId, profileId, 'runtime');
+  const configFile = 'BepInEx/config/BepInEx.cfg';
+  await writeFile(path.join(lockedRuntime, configFile), 'Edited locally');
+
+  f.statuses.get(gameId).loader = 'clean';
+  await f.invoke('setup-loader', profileId, [loader, PLUGIN], 'Default', gameId);
+  const replacement = f.calls.find(call => call.method === 'setup').input.loaderPath;
+  assert.notEqual(replacement, lockedRuntime);
+  assert.equal(await readFile(path.join(replacement, configFile), 'utf8'), 'Edited locally');
+
+  f.statuses.get(gameId).loader = 'managed';
+  await f.invoke('launch-game', 'modded', profileId, [loader, PLUGIN], undefined, 'Default', gameId);
+  assert.equal(f.calls.find(call => call.method === 'launch').input.profilePath, replacement);
+  await f.invoke('open-profile', profileId, gameId);
+  assert.equal(f.opened.at(-1), replacement);
+  assert(f.history.list().every(record => record.status === 'complete'));
 });
 
 test('the native busy lock excludes another game while real profile downloads are preparing', async t => {

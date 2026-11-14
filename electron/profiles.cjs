@@ -1,6 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { constants } = require('node:fs');
 const { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } = require('node:fs/promises');
+const { setTimeout: delay } = require('node:timers/promises');
 const path = require('node:path');
 const { extractArchive } = require('./archive.cjs');
 const { normalizeConfigFiles } = require('./config-files.cjs');
@@ -12,6 +13,12 @@ const GAME = 'lethal-company';
 const GAMES = new Map([['lethal-company', 'Lethal Company'], ['repo', 'R.E.P.O.'], ['peak', 'PEAK'], ['mimesis', 'MIMESIS']]);
 const PRELOADER = 'BepInEx/core/BepInEx.Preloader.dll';
 const FORMAT = 2;
+const DEFAULT_RUNTIME = 'runtime';
+const ACTIVE_RUNTIME = '.ember-runtime';
+const RUNTIME_MARKER = '.modspindle-profile';
+const GENERATED_RUNTIME = /^runtime-[a-f0-9]{16}$/;
+const RETIRED_RUNTIME = /^retired-[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+const LOCK_ERRORS = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
 function profileDirectory(root, id, gameId) {
   if (typeof id !== 'string' || (id !== `${gameId}-default` && !/^[0-9a-f-]{36}$/i.test(id))) {
@@ -25,6 +32,16 @@ async function fileInfo(file) {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
+}
+
+async function selectedRuntime(base) {
+  const selection = path.join(base, ACTIVE_RUNTIME);
+  const info = await fileInfo(selection);
+  if (!info) return DEFAULT_RUNTIME;
+  if (!info.isFile() || info.size !== 24) throw new Error('Ember could not read the active profile folder.');
+  const name = await readFile(selection, 'utf8');
+  if (!GENERATED_RUNTIME.test(name)) throw new Error('Ember could not read the active profile folder.');
+  return name;
 }
 
 async function copyTree(source, target, overwrite = false) {
@@ -54,9 +71,58 @@ async function hasLoader(directory, kind) {
   return true;
 }
 
-function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
+function createProfileBuilder(root, cache, { gameId = GAME, renamePath = rename, retryDelay = delay } = {}) {
   if (!GAMES.has(gameId)) throw new Error('Choose a supported game for profile preparation.');
   const active = new Map();
+
+  async function renameWithRetry(source, target) {
+    for (const wait of [40, 100, 200]) {
+      try {
+        return await renamePath(source, target);
+      } catch (error) {
+        if (!LOCK_ERRORS.has(error.code)) throw error;
+        await retryDelay(wait);
+      }
+    }
+    return renamePath(source, target);
+  }
+
+  async function retireRuntime(runtime) {
+    const retired = path.join(path.dirname(runtime), `retired-${randomUUID()}`);
+    try {
+      if (!(await fileInfo(runtime))?.isDirectory() || !(await fileInfo(path.join(runtime, RUNTIME_MARKER)))?.isFile()) return;
+      // A failed rename leaves the old runtime intact even if one file is locked.
+      await renamePath(runtime, retired);
+      await rm(retired, { recursive: true, force: true });
+    } catch { /* Try again when the profile is next prepared. */ }
+  }
+
+  async function retireInactiveRuntimes(base, currentName) {
+    const names = await readdir(base).catch(() => []);
+    for (const name of names) {
+      if (RETIRED_RUNTIME.test(name)) {
+        await rm(path.join(base, name), { recursive: true, force: true }).catch(() => {});
+      } else if (name !== currentName && (name === DEFAULT_RUNTIME || GENERATED_RUNTIME.test(name))) {
+        await retireRuntime(path.join(base, name));
+      }
+    }
+  }
+
+  async function activateNewRuntime(base, stage, next) {
+    const name = `runtime-${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const runtime = path.join(base, name);
+    const selection = path.join(stage, ACTIVE_RUNTIME);
+    await writeFile(selection, name, { flag: 'wx' });
+    await renameWithRetry(next, runtime);
+    try {
+      // Commit only after the new runtime is complete and in its final location.
+      await renameWithRetry(selection, path.join(base, ACTIVE_RUNTIME));
+    } catch (error) {
+      await retireRuntime(runtime);
+      throw error;
+    }
+    return runtime;
+  }
 
   async function prepareProfile(id, entries, importedConfigFiles = {}, importedUserDataFiles = {}) {
     const base = profileDirectory(root, id, gameId);
@@ -82,21 +148,29 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
     active.set(base, operation);
     try {
       return await operation;
+    } catch (error) {
+      if (LOCK_ERRORS.has(error.code)) {
+        throw new Error('Windows is blocking access to this profile. Close any programs using its files and try again.', { cause: error });
+      }
+      throw error;
     } finally {
       active.delete(base);
     }
   }
 
   async function build(base, key, loader, refs, configFiles, userDataFiles) {
-    const runtime = path.join(base, 'runtime');
-    const marker = '.modspindle-profile';
+    const currentName = await selectedRuntime(base);
+    const runtime = path.join(base, currentName);
     const current = await fileInfo(runtime);
     if (current && (!current.isDirectory() || current.isSymbolicLink())) throw new Error('The profile folder is invalid.');
-    const previousKey = await readFile(path.join(runtime, marker), 'utf8').catch(error => {
+    const previousKey = await readFile(path.join(runtime, RUNTIME_MARKER), 'utf8').catch(error => {
       if (error.code === 'ENOENT') return '';
       throw error;
     });
-    if (previousKey === key && await hasLoader(runtime, loader.kind)) return runtime;
+    if (previousKey === key && await hasLoader(runtime, loader.kind)) {
+      if (currentName !== DEFAULT_RUNTIME) await retireInactiveRuntimes(base, currentName);
+      return runtime;
+    }
 
     await mkdir(base, { recursive: true });
     const stage = await mkdtemp(path.join(base, 'stage-'));
@@ -139,12 +213,30 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
       if (current) await copyTree(path.join(runtime, 'BepInEx', 'config'), path.join(next, 'BepInEx', 'config'), true);
       if (current) await copyTree(path.join(runtime, 'UserData'), path.join(next, 'UserData'), true);
       await writeFile(path.join(next, '.ember-loader.json'), JSON.stringify({ kind: loader.kind, name: loader.name, version: loader.ref.version }), { flag: 'wx' });
-      await writeFile(path.join(next, marker), key, { flag: 'wx' });
-      if (current) await rename(runtime, backup);
+      await writeFile(path.join(next, RUNTIME_MARKER), key, { flag: 'wx' });
+      if (currentName !== DEFAULT_RUNTIME) {
+        const replacement = await activateNewRuntime(base, stage, next);
+        await retireInactiveRuntimes(base, path.basename(replacement));
+        return replacement;
+      }
+      if (current) {
+        try {
+          await renameWithRetry(runtime, backup);
+        } catch (error) {
+          if (!LOCK_ERRORS.has(error.code)) throw error;
+          return await activateNewRuntime(base, stage, next);
+        }
+      }
       try {
-        await rename(next, runtime);
+        await renameWithRetry(next, runtime);
       } catch (error) {
-        if (current) await rename(backup, runtime);
+        if (current) {
+          try {
+            await renameWithRetry(backup, runtime);
+          } catch (restoreError) {
+            throw new Error(`Ember could not restore the previous runtime. Its files are still in ${backup}.`, { cause: restoreError });
+          }
+        }
         throw error;
       }
       if (current) await rm(backup, { recursive: true, force: true }).catch(() => {});
@@ -155,7 +247,8 @@ function createProfileBuilder(root, cache, { gameId = GAME } = {}) {
   }
 
   async function openProfilePath(id) {
-    const runtime = path.join(profileDirectory(root, id, gameId), 'runtime');
+    const base = profileDirectory(root, id, gameId);
+    const runtime = path.join(base, await selectedRuntime(base));
     if (!(await fileInfo(runtime))?.isDirectory()) throw new Error('Prepare this profile first.');
     return runtime;
   }
